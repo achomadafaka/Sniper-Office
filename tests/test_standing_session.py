@@ -99,3 +99,18 @@ def test_a_session_already_running_when_the_counter_arrives_is_counted_from_the_
                       started_at=1.,ended_at=2.+i,per_wake_max=None,usage_scope='per_wake',absolute_ceiling=200000,calibration=False,sdk_version='t',uncapped=True)
     s.wake('mail')
     assert s.state['session_wakes']==3 and s.state['rotate_due'] is True
+
+
+def test_host_guard_blocks_new_wakes_but_the_in_wake_watcher_never_reads_it(tmp_path):
+    import json, time
+    from sniper_office import seat_host as H
+    guard = tmp_path / 'guard.json'
+    seat = H.Seat.__new__(H.Seat)
+    seat.cfg = dict(host_guard_file=str(guard)); seat.clock = time.time
+    guard.write_text(json.dumps(dict(state='ready', reason=None, at=time.time(), guard_policy_version='x')))
+    ready = seat._host_guard_reason()
+    guard.write_text(json.dumps(dict(state='paused', reason='cpu_pressure', at=time.time(), guard_policy_version='x')))
+    assert seat._host_guard_reason().startswith('host_guard:')
+    assert ready is None or ready.startswith('host_guard:')
+    import inspect
+    assert '_host_guard_reason' not in inspect.getsource(H.Seat._park_now)     # the watcher that stops running wakes uses _park_now only

@@ -349,8 +349,17 @@ class Seat:
     def _park_now(self):
         return self.guard.check(self.clock()) or self.extra_park() or self._token_reason()
 
+    def _host_guard_reason(self):
+        """The host watchdog's guard file (cfg host_guard_file): under host pressure no NEW wake starts. Checked only before a wake, never by the
+        in-wake watcher, so a running wake is never cut by it."""
+        path=self.cfg.get('host_guard_file')
+        if not path:return None
+        from . import host_guard
+        reason=host_guard.external_guard(path,now=self.clock(),max_age_s=self.cfg.get('host_guard_max_age_s',30.))
+        return 'host_guard:%s'%reason if reason else None
+
     def gate(self):
-        return (self._park_now() or self._claude_auth_reason() or self._cap_reason() or
+        return (self._park_now() or self._host_guard_reason() or self._claude_auth_reason() or self._cap_reason() or
                 park_reason(self.quota,actor_id=self.actor,family=self.cfg['family'],account_alias=self.cfg['account_alias'],now=self.clock(),
                             max_age_s=self.cfg['account_max_age_s'],wakes_per_hour=self.cfg['wakes_per_hour'],daily_limit=self.cfg.get('daily_limit'),uncapped=bool(self.cfg.get('uncapped'))))
 
