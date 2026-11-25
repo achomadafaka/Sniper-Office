@@ -151,7 +151,7 @@ def discover(net, clock):
         notes[name] = why or 'ok'
         for row in doc if isinstance(doc, list) else []:
             if isinstance(row, dict) and row.get('chainId') == 'solana' and isinstance(row.get('tokenAddress'), str) and B58.fullmatch(row['tokenAddress']):
-                found.setdefault(row['tokenAddress'], (name, dict(fetched_at=at, url=url, claim=dict(chainId='solana', tokenAddress=row['tokenAddress'], description=str(row.get('description') or '')[:200]))))
+                found.setdefault(row['tokenAddress'], (name, dict(fetched_at=at, url=url, claim=dict(chainId='solana', tokenAddress=row['tokenAddress']))))
     url = 'https://api.geckoterminal.com/api/v2/networks/solana/new_pools'
     doc, why = net.get(url)
     at = clock()
@@ -162,7 +162,7 @@ def discover(net, clock):
             attrs = row['attributes']
             mint = base.split('_', 1)[1]
             if base.startswith('solana_') and B58.fullmatch(mint):
-                found.setdefault(mint, ('geckoterminal:new_pools', dict(fetched_at=at, url=url, claim=dict(pool=attrs.get('address'), pool_created_at=attrs.get('pool_created_at'), name=attrs.get('name')))))
+                found.setdefault(mint, ('geckoterminal:new_pools', dict(fetched_at=at, url=url, claim=dict(pool=attrs.get('address'), pool_created_at=attrs.get('pool_created_at')))))
         except (KeyError, TypeError, IndexError, AttributeError):
             continue
     return [(m, s, c) for m, (s, c) in found.items()], notes
