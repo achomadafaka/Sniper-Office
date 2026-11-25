@@ -67,6 +67,27 @@ def _snapshot_id(snap):
     return hashlib.sha256(_canon(body)).hexdigest()
 
 
+def verify_snapshot(backend, snapshot, trusted_snapshot_id):
+    """The sealed members plus the superseded entries they replaced, each re-hashed. The dict is never trusted: its id is recomputed from its body
+    and compared to the id the trusted sealer recorded. An edited or deleted member is refused."""
+    if not trusted_snapshot_id or _snapshot_id(snapshot) != snapshot.get("snapshot_id") or snapshot["snapshot_id"] != trusted_snapshot_id:
+        raise Refused("sealed snapshot id does not match its body / the trusted sealed id")
+    by_id = backend.get([m["entry_id"] for m in snapshot["members"]] + [sp["old"] for sp in snapshot["supersessions"]])
+    members = []
+    for m in snapshot["members"]:
+        e = by_id.get(m["entry_id"])
+        if e is None or _content_sha(e) != m["content_sha256"]:
+            raise Refused("sealed snapshot member %s missing or altered" % m["entry_id"])
+        members.append(e)
+    olds = []
+    for sp in snapshot["supersessions"]:                              # the history is pinned too: an edited or deleted superseded entry is refused
+        old = by_id.get(sp["old"])
+        if old is None or _content_sha(old) != sp["old_sha256"]:
+            raise Refused("sealed snapshot supersession history %s missing or altered" % sp["old"])
+        olds.append(old)
+    return members + olds
+
+
 def retrieve(backend, query, *, decision_cut, candidate, viewer_role, k=5, viewer=None, snapshot=None, trusted_snapshot_id=None, released_decisions=frozenset()):
     """snapshot mode needs `trusted_snapshot_id` (the sealed id recorded by the trusted sealer): the dict is never trusted, its id is RECOMPUTED from its body and compared to both. The decision cut still applies inside a snapshot
     (an entry known after the decision is never served), with supersession as of that cut. A peer's pitch is visible only to its author, or once the TRUSTED decision-scoped barrier released that decision_id (`released_decisions`):
@@ -77,22 +98,7 @@ def retrieve(backend, query, *, decision_cut, candidate, viewer_role, k=5, viewe
     if quarantined and snapshot is None:
         raise Refused("role %s reads sealed snapshots only" % viewer_role)
     if snapshot is not None:
-        if not trusted_snapshot_id or _snapshot_id(snapshot) != snapshot.get("snapshot_id") or snapshot["snapshot_id"] != trusted_snapshot_id:
-            raise Refused("sealed snapshot id does not match its body / the trusted sealed id")
-        by_id = backend.get([m["entry_id"] for m in snapshot["members"]] + [sp["old"] for sp in snapshot["supersessions"]])
-        members = []
-        for m in snapshot["members"]:
-            e = by_id.get(m["entry_id"])
-            if e is None or _content_sha(e) != m["content_sha256"]:
-                raise Refused("sealed snapshot member %s missing or altered" % m["entry_id"])
-            members.append(e)
-        olds = []
-        for sp in snapshot["supersessions"]:                              # the history is pinned too: an edited or deleted superseded entry is refused
-            old = by_id.get(sp["old"])
-            if old is None or _content_sha(old) != sp["old_sha256"]:
-                raise Refused("sealed snapshot supersession history %s missing or altered" % sp["old"])
-            olds.append(old)
-        pool = _visible(members + olds, decision_cut)                     # the decision cut and supersession as of it, inside the sealed membership
+        pool = _visible(verify_snapshot(backend, snapshot, trusted_snapshot_id), decision_cut)   # the decision cut and supersession as of it, inside the sealed membership
     else:
         pool = _visible(backend.entries(cut=decision_cut), decision_cut)         # the known_at cut is applied by the backend through its index
     if quarantined:

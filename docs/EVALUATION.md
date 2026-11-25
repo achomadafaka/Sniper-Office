@@ -1,6 +1,7 @@
 # Evaluation and promotion: design note
 
-Status: design only, nothing built. Stage 4 of `docs/DESIGN.md`. Written 2026-11-25.
+Status: stages 4a to 4c and 4e are built (`roster`, `nominee`, `launcher_policy`, `evaluation`, `examples/evaluation_demo.py`). Section 11 lists
+where the build differs from this note. Stage 4 of `docs/DESIGN.md`. Written 2026-11-25.
 Source read for this note: the evaluation modules of the source package at commit `f07f79614` (listed in section 2),
 its readiness rules document and sections 4.2 to 4.4 of its design document.
 
@@ -170,3 +171,19 @@ books) is part of stage 6, not of this stage.
 | 6 | Auditor in this stage | Chain audit against pinned heads and the counters read: yes, it is small and the verdict depends on it. Reconciliation of project totals stays in the project. |
 | 7 | First real consumer | Needs your answer. The paused source experiment is the obvious one, but its plug-in is stage 6. A second, different consumer would test whether this interface is general or just the first experiment's shape. |
 | 8 | Order of work | 4a, 4b, 4c, 4e, then stop and review before 4d. |
+
+## 11. As built (2026-11-25)
+
+| Note says | Built |
+|---|---|
+| Five project methods, including `cases()` | Four. The case log is the package's own table, written with `evaluation.log_case()` by the project's host process. |
+| Registered through the plug-in host | The project object is passed to `evaluation.look()` directly. The grader is a separate process and does not load seat plug-ins. |
+| Tables `evaluation_cases`, `evaluation_gaps`, `evaluation_coverage` | The first two. Coverage proofs are not built; a gap is recorded with `record_gap()` and counted in the release. |
+| A grader entry point | Not built. `look()` and `release()` are functions; the demo calls them. |
+| Auditor chain check (decision 6) | Not built. `store.verify_chain()` exists; pinning heads outside the database does not. |
+| `pass_unproven_custody` when the read-only proof is off | Built, and stricter: custody is recorded at the freeze, and a look can never report better custody than the freeze had. |
+| Verdict states | `pass`, `pass_pending_replication`, `pass_unproven_custody`, `fail`, `no_verdict`. A look that is too early raises `LookRefused` and spends nothing. |
+| One look per epoch | A release closes the epoch and writes the trial's terminal row, whatever the verdict. |
+| Stage 4d (bootstrap, calibration) | Not built, as planned. |
+
+Never run against real data: the evaluated-epoch gate in the source was switched off, so this path has only ever seen tests and the demo.

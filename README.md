@@ -90,6 +90,21 @@ process started by a launcher that owns the credentials.
 | `model_auth`, `host_auth`, `codex_auth` | Credential snapshots for a child; a rotated Codex token is written back only for the same account. |
 | `org`, `roster`, `shifts` | Seats from an org file, hire and fire with epochs, shift boundaries and handover notes. Examples in `config/`. |
 
+Evaluation and promotion (stage 4). `docs/EVALUATION.md` explains the procedure.
+
+| Module | What it holds |
+|---|---|
+| `evaluation` | Design file, case log, grading into a separate file, the verdict (`pass`, `pass_pending_replication`, `pass_unproven_custody`, `fail`, `no_verdict`), release of aggregates, and the promotion ticket. Standard library only. |
+| `roster` (`open_evaluated_epoch`, `verify_nominee`) | Freezes one configuration, numbers the attempt, spends significance, appends to the trial registry. Any roster, prompt or model change breaks the epoch. |
+| `nominee` | Checks the frozen configuration against the files, the live roster and the sealed memory snapshot. |
+| `launcher_policy` | One-use host authority for a freeze or re-check, with the read-only config proof. |
+
+```bash
+PYTHONPATH=. python3 examples/evaluation_demo.py
+```
+
+That runs a made-up team through two evaluated epochs and files the promotion ticket. A pass only ever files a ticket.
+
 The seat runtime needs Linux, `bwrap`, systemd user units and a dedicated system user (default `office`). It also
 needs the `cryptography` package on the host, and `claude-agent-sdk` and `playwright` inside the published runtime.
 `tests/test_walls.py` and `tests/test_browse_security.py` run the real sandbox when that user and runtime exist and
@@ -156,9 +171,9 @@ A project that used the source package must set these in its config to get the o
 
 ## Not included
 
-Evaluation and promotion (including evaluated epochs and the one-use launcher policy that guards them), a watchdog
-that writes the guard file, service units for the supervisor and launcher, and the web UI. Those are later stages
-of the plan.
+A watchdog that writes the guard file, service units for the supervisor and launcher, a grader entry point, an
+auditor that pins chain heads outside the database, the optional bootstrap and calibration statistics, and the web
+UI.
 
 Not yet proven: a full wake from this package on a real host (publish, sandbox, model call, tool call, mail). The
 parts are tested, and the sandbox tests run for real, but the end-to-end run has not been done.

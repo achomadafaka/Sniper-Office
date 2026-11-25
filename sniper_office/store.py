@@ -15,7 +15,7 @@ import uuid
 
 PRIVATE_TABLES=frozenset({'grades'})
 APPEND_ONLY_TABLES=frozenset({'claims','decisions','org_changes','grades','receipts',
-    'decision_bundles','sealed_views','memory_entries','memory_snapshots'})
+    'decision_bundles','sealed_views','memory_entries','memory_snapshots','trial_registry','evaluation_cases','evaluation_gaps'})
 MUTABLE_TABLES=frozenset({'agents','turn_runs','action_requests','messages','tickets','heartbeats','spend','epochs'})
 _COLUMNS={
     'memory_entries':{'known_at':"REAL NOT NULL CHECK(json_type(payload_json,'$.known_at') IN ('integer','real'))", 'namespace':'TEXT NOT NULL', 'content':'TEXT NOT NULL', 'decision_id':'TEXT', 'supersedes':'TEXT'},
@@ -26,6 +26,9 @@ _COLUMNS={
     'grades':{'decision_seq':'INTEGER','candidate_seq':'INTEGER','epoch_id':'TEXT','kind':'TEXT'},
     'decision_bundles':{'decision_id':'TEXT'},
     'sealed_views':{'epoch_id':'TEXT'},
+    'trial_registry':{'k':'INTEGER'},
+    'evaluation_cases':{'epoch_id':'TEXT','case_id':'TEXT'},
+    'evaluation_gaps':{'epoch_id':'TEXT','source':'TEXT'},
 }
 _EXTRA_INDEXES=[]
 _NAME=re.compile(r'[a-z][a-z0-9_]{0,62}\Z')
@@ -121,6 +124,9 @@ def open_store(path: Path, *, evaluation=False):
                 if not fts_exists:
                     conn.execute("INSERT INTO memory_entries_fts(memory_entries_fts) VALUES('rebuild')")
                 conn.execute('CREATE UNIQUE INDEX IF NOT EXISTS decision_bundles_decision ON decision_bundles(decision_id)')
+                conn.execute('CREATE UNIQUE INDEX IF NOT EXISTS evaluation_cases_identity ON evaluation_cases(epoch_id,case_id)')
+                # One use per launcher authority: a replayed nonce cannot append a second receipt.
+                conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS receipts_launcher_nonce ON receipts(json_extract(payload_json,'$.launcher_policy_nonce')) WHERE json_extract(payload_json,'$.kind')='launcher_policy_use'")
                 for statement in _EXTRA_INDEXES:conn.execute(statement)
                 for table in sorted(MUTABLE_TABLES):
                     conn.execute('CREATE TABLE IF NOT EXISTS '+table+"(id TEXT NOT NULL PRIMARY KEY,payload_json TEXT NOT NULL "

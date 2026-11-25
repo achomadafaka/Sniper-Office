@@ -363,7 +363,7 @@ Revised stages (replaces the table in section 5):
 | 2a | Seat runtime modules with no domain coupling: egress, sandbox, events, budgets, retention, in-sandbox children | Done, commits `b175cb5`, `b9787ab`. |
 | 2b | Tool server and seat host rebuilt on a plug-in loader (section 3a); database tool; publish step; unit template; setup guide | Done in code and tests. A full wake on this host from the package is not yet run: it needs a publish to `/srv/sniper-office`, which replaces the release the paused Sniper seats use. |
 | 3 | v1 launcher, auth snapshots, org, roster, shifts, scheduler (decision 7) | Done in code and tests. Left for stage 4: evaluated epochs, nominee checks, the one-use launcher policy. Not extracted: the watchdog daemon that writes the guard file, and unit files for supervisor and launcher (Sniper's are tied to its paths). |
-| 4 | Evaluation and promotion interface (decision 3) | Design note written: `docs/EVALUATION.md`. Waiting on its decisions. |
+| 4 | Evaluation and promotion interface (decision 3) | Built except the optional statistics extra, a grader entry point and the auditor: see `docs/EVALUATION.md` section 11. |
 | 5 | Stand-alone web UI (decision 10): design note first | Needs a design. |
 | 6 | Move (decision 5): Sniper depends on the package, `sniper/office/` core modules become re-exports and then go, trading tools register through `sniper/office_plugin.py`. Touches Sniper, so it runs on its own branch there and only on the user's word. | After stages 2-3. |
 | 7 | pm_desk seats move onto the seat runtime (decision 2) | After stage 6. |

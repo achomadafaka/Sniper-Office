@@ -87,6 +87,127 @@ def _record(conn, lim, now, *, kind, by, reason, extra, epoch_kind="discovery", 
 
 
 
+def _open_evaluated(conn, lim, *, clock, hypothesis_id, by, reason, nominee, nominee_refs, config_root,
+                    k=None, alpha_k=None, nominee_config_hash=None, launcher_policy=None, probe_write=None, family_alpha=0.05, k_max=10, check=None, require_readonly=True):
+    """Internal verified freeze. The attempt number and its significance are derived from the registry here, never taken from the caller."""
+    from . import nominee as N, launcher_policy as LP
+    _now(clock)
+    try:
+        frozen = S.canonical_json({'nominee':nominee, 'refs':nominee_refs})
+        if len(frozen) > 65536:
+            raise OrgRefused('nominee_input_size')
+        copied = json.loads(frozen)
+        nominee, nominee_refs = copied['nominee'], copied['refs']
+    except (TypeError, ValueError, RecursionError):
+        raise OrgRefused('nominee_input_invalid') from None
+    if conn.in_transaction:
+        raise OrgRefused('evaluated_freeze_requires_owned_transaction')
+    try:
+        authority = LP.prepare(root=config_root, refs=nominee_refs, by=by, clock=clock,
+                               launcher_policy=launcher_policy, probe_write=probe_write, require_readonly=require_readonly)
+    except LP.Invalid as exc:
+        raise OrgRefused(str(exc)) from None
+    try:
+        with S.write_transaction(conn):
+            deadline = time.monotonic() + .5
+            now = _now(clock)
+            authority.recheck(now)
+            authority.ensure_unused(conn)
+            count, largest = conn.execute('SELECT count(*),max(length(payload_json)) FROM trial_registry').fetchone()
+            if count > 4096 or (largest or 0) > 65536 or not S.verify_chain(conn, 'trial_registry')[0]:
+                raise OrgRefused('trial_registry_corrupt_or_unbounded')
+            spent = [json.loads(row[0]).get('k') for row in conn.execute('SELECT payload_json FROM trial_registry')]
+            if any(type(value) is not int or not 1 <= value <= k_max for value in spent):
+                raise OrgRefused('trial_registry_corrupt')
+            derived_k = 1 + max(spent, default=0)
+            if derived_k > k_max:
+                raise OrgRefused('family_exhausted')
+            derived_alpha = family_alpha / (derived_k * (derived_k + 1))   # sums to under family_alpha over any number of attempts
+            if k is not None and (type(k) is not int or k != derived_k):
+                raise OrgRefused('k_mismatch')
+            if alpha_k is not None and (type(alpha_k) not in (int,float) or alpha_k != derived_alpha):
+                raise OrgRefused('alpha_mismatch')
+            for (pj,) in conn.execute("SELECT payload_json FROM epochs WHERE json_extract(payload_json,'$.closed_at') IS NULL"):
+                if json.loads(pj).get("kind") == "evaluated":
+                    raise OrgRefused("evaluated_epoch_open")
+            try:
+                resolved, refs = N.resolve(conn, nominee, nominee_refs, root=config_root, k=derived_k, opened_at=now, deadline=deadline, authority=authority, check=check)
+            except N.Invalid as exc:
+                raise OrgRefused('nominee_unresolved: '+str(exc)) from None
+            digest = hashlib.sha256(S.canonical_json(resolved)).hexdigest()
+            if nominee_config_hash is not None and nominee_config_hash != digest:
+                raise OrgRefused('nominee_hash_mismatch')
+            now = _now(clock)
+            policy_receipt = authority.consume(conn, now)
+            eid = _record(conn, lim, now, kind="nominee_freeze", by=by, reason=reason, extra={"op": "open_evaluated", "hypothesis_id": hypothesis_id, "k": derived_k},
+                          epoch_kind="evaluated", epoch_extra={"hypothesis_id": hypothesis_id, "k": derived_k, "alpha_k": derived_alpha,
+                              "nominee_config_hash": digest, "nominee": resolved, "nominee_refs": refs, "launcher_policy_receipt_hash":policy_receipt,
+                              "config_custody": "proven" if authority.readonly else "unproven"})
+            S.append(conn, "trial_registry", {"k": derived_k, "hypothesis_id": hypothesis_id, "alpha_k": derived_alpha, "status": "RUNNING", "nominee_config_hash": digest, "epoch_id": eid})
+    except LP.Invalid as exc:
+        raise OrgRefused(str(exc)) from None
+    finally:
+        authority.close()
+    return eid
+
+
+def verify_nominee(conn, *, epoch_id, config_root, clock, launcher_policy=None, probe_write=None, check=None, require_readonly=True):
+    """Recheck before every export/look. A mismatch durably spends the trial as BROKEN."""
+    from . import nominee as N, launcher_policy as LP
+    if conn.in_transaction:
+        raise OrgRefused('nominee_verification_requires_owned_transaction')
+    now = _now(clock)
+    peek = conn.execute('SELECT payload_json FROM epochs WHERE id=?', (epoch_id,)).fetchone()
+    peek = json.loads(peek[0]) if peek else {}
+    try:
+        authority = LP.prepare(root=config_root, refs=peek.get('nominee_refs'), by='crew', clock=clock,
+                               launcher_policy=launcher_policy, probe_write=probe_write, require_readonly=require_readonly)
+    except LP.Invalid as exc:
+        raise OrgRefused(str(exc)) from None
+    try:
+        broken = False
+        with S.write_transaction(conn):
+            authority.recheck(_now(clock))
+            authority.ensure_unused(conn)
+            row = conn.execute('SELECT payload_json FROM epochs WHERE id=?', (epoch_id,)).fetchone()
+            e = json.loads(row[0]) if row else {}
+            try:
+                if e.get('status') == 'broken' or e.get('kind') != 'evaluated':
+                    raise N.Invalid('not_an_intact_evaluated_epoch')
+                resolved, refs = N.resolve(conn, e['nominee'], e['nominee_refs'], root=config_root,
+                                          k=e['k'], opened_at=e['opened_at'], deadline=time.monotonic()+.5, authority=authority, check=check)
+                if hashlib.sha256(S.canonical_json(resolved)).hexdigest() != e['nominee_config_hash']:
+                    raise N.Invalid('stored_nominee_hash_mismatch')
+            except (N.Invalid, KeyError):
+                if e.get('kind') == 'evaluated' and e.get('status') != 'broken':
+                    e.update(status='broken', closed_at=now)
+                    conn.execute('UPDATE epochs SET payload_json=? WHERE id=?', (S.canonical_json(e).decode(), epoch_id))
+                    S.append(conn, 'trial_registry', {key:e[key] for key in ('k','hypothesis_id','alpha_k','nominee_config_hash','epoch_id')} | {'status':'BROKEN','reason':'nominee_changed'})
+                broken = True
+            if not broken:
+                authority.consume(conn, _now(clock))
+    except LP.Invalid as exc:
+        raise OrgRefused(str(exc)) from None
+    finally:
+        authority.close()
+    if broken:
+        raise OrgRefused('nominee_changed')
+    return e['nominee_config_hash']
+
+
+def open_evaluated_epoch(conn, lim, *, clock, hypothesis_id, by, reason, launcher_check, **freeze):
+    """Operator side only, fail-closed, nothing written on a refusal: `by` must be 'crew'; launcher_check(by) (the host's trusted-launcher identity check: a
+    caller-set 'crew' string is only a label) must be True; the limits must say evaluated_epoch_allowed exactly True. Then the verified freeze."""
+    _actor(by)
+    if by != "crew":
+        raise OrgRefused("crew_only: agents cannot open or freeze an evaluated epoch")
+    if not callable(launcher_check) or launcher_check(by) is not True:
+        raise OrgRefused("untrusted_launcher: 'crew' is not backed by the host's trusted launcher")
+    if lim.get("evaluated_epoch_allowed") is not True:
+        raise OrgRefused("evaluated_epoch_not_allowed: the limits do not explicitly allow an evaluated epoch")
+    return _open_evaluated(conn, lim, clock=clock, hypothesis_id=hypothesis_id, by=by, reason=reason, **freeze)
+
+
 def hire(conn, lim, *, clock, role, pod, provider, model, family, idempotency_key, persona_fn, policy_hash, prompt_hash, lane=None, lens=None, by="head", reason="hire"):
     _actor(by)
     aid = "ag_" + hashlib.sha256(idempotency_key.encode()).hexdigest()[:16]
