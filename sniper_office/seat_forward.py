@@ -4,11 +4,12 @@ import socket
 import subprocess
 import sys
 import threading
+import time
 
 PORT=3128
 
 
-def _copy(src,dst):
+def _copy(src,dst,done):
     try:
         while True:
             data=src.recv(65536)
@@ -18,16 +19,30 @@ def _copy(src,dst):
     finally:
         try:dst.shutdown(socket.SHUT_WR)
         except OSError:pass
+        done()
+
+
+def _pair(client,upstream):
+    """Both sockets close once both directions end: an unclosed pair leaks two fds, and at the fd limit accept() fails for good (2026-11-25 seat hangs)."""
+    left=[2];lock=threading.Lock()
+    def done():
+        with lock:
+            left[0]-=1
+            if left[0]:return
+        client.close();upstream.close()
+    for a,b in ((client,upstream),(upstream,client)):threading.Thread(target=_copy,args=(a,b,done),daemon=True).start()
 
 
 def _serve(path,listener):
     while True:
-        client,_=listener.accept()
+        try:client,_=listener.accept()
+        except OSError:
+            time.sleep(0.2);continue   # e.g. EMFILE: wait for fds to free up, never let the forwarder die
         upstream=socket.socket(socket.AF_UNIX)
         try:upstream.connect(path)
         except OSError:
             client.close();upstream.close();continue
-        for a,b in ((client,upstream),(upstream,client)):threading.Thread(target=_copy,args=(a,b),daemon=True).start()
+        _pair(client,upstream)
 
 
 def start(path='/opt/proxy.sock'):

@@ -38,7 +38,7 @@ def write_home(doc,HOME=HOME):
     env={k:os.environ[k] for k in ('PYTHONHOME','LD_LIBRARY_PATH') if k in os.environ}
     if 'model' not in doc:return   # the quota read needs only the token
     lines=['model=%s'%json.dumps(doc['model']),'model_reasoning_effort=%s'%json.dumps(doc.get('effort','medium')),'developer_instructions=%s'%json.dumps(doc['system']),
-           '[analytics]','enabled=false','[mcp_servers.office]','command=%s'%json.dumps(sys.executable),'args=%s'%json.dumps(['-c',seat_child.BRIDGE]),'startup_timeout_sec=180','tool_timeout_sec=3600','[mcp_servers.office.env]']+['%s=%s'%(k,json.dumps(v)) for k,v in env.items()]
+           '[features]','apps=false','plugins=false','[analytics]','enabled=false','[mcp_servers.office]','command=%s'%json.dumps(sys.executable),'args=%s'%json.dumps(['-c',seat_child.BRIDGE]),'startup_timeout_sec=180','tool_timeout_sec=3600','[mcp_servers.office.env]']+['%s=%s'%(k,json.dumps(v)) for k,v in env.items()]
     with open(HOME+'/config.toml','w') as f:f.write('\n'.join(lines)+'\n')
 
 
