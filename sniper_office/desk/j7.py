@@ -50,7 +50,8 @@ CREATE INDEX IF NOT EXISTS j7_signals_coin ON j7_signals(chain, token, recv_at);
 
 
 def open_db(path):
-    conn = sqlite3.connect(path, timeout=10, isolation_level=None)
+    # check_same_thread=False: one writer connection shared by the account threads; Listener.handle serialises every use under self.lock
+    conn = sqlite3.connect(path, timeout=10, isolation_level=None, check_same_thread=False)
     conn.execute('PRAGMA journal_mode=WAL')
     conn.executescript(SCHEMA)
     return conn

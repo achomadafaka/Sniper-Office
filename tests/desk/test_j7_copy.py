@@ -106,6 +106,23 @@ def test_a_signal_is_stored_once_across_replays_accounts_and_restarts(tmp_path):
     assert lis.counts == dict(accepted=1, duplicate=1)
 
 
+def test_two_account_threads_store_concurrently_on_the_one_listener_connection(tmp_path):
+    lis = listener(tmp_path)                                         # built on the main thread, like run()
+    errs, out = [], []
+
+    def work(acct):
+        try:
+            for i in range(25):
+                out.append(lis.handle(acct, 'fomo_event', trade(tid='swap:r:0xtx%d:0xw:%s' % (i, EVM) if acct == 0 else 'swap:r:0xtx%d:0xw:%s' % (i, EVM2), token=EVM if acct == 0 else EVM2)))
+        except Exception as exc:   # noqa: BLE001 - the test reports whatever the thread died of
+            errs.append(repr(exc))
+    ts = [threading.Thread(target=work, args=(a,)) for a in (0, 1)]
+    [t.start() for t in ts]
+    [t.join() for t in ts]
+    assert errs == [] and out.count('accepted') == 50
+    assert len(rows(lis)) == 50 and lis.db.execute('SELECT count(*) FROM desk_tickets').fetchone() == (50,)
+
+
 def test_tracked_frames_and_unknown_events_never_store_anything(tmp_path):
     lis = listener(tmp_path)
     assert lis.handle(0, 'tracked_fomo', dict(fomo_users=[1, 2, 3])) == 'tracked' and lis.tracked[(0, 'tracked_fomo')] == 3
