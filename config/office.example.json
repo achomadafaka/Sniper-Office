@@ -1,0 +1,34 @@
+{
+  "roles": {
+    "researcher": ["report.read", "intake.read", "browse", "ticket.propose", "msg.send", "task.set", "task.update"],
+    "analyst": ["report.read", "ticket.propose"],
+    "reviewer": ["decision.bundle", "reviewer.decide", "msg.send", "task.set", "task.update"],
+    "risk": ["decision.bundle", "book.read_order", "book.read_position"],
+    "executor": ["decision.bundle", "book.read_order", "book.read_position", "book.submit"],
+    "head": ["org.read", "org.propose", "ticket.propose", "ticket.approve", "msg.send", "task.set", "task.update"],
+    "postmortem": ["grade.read", "lesson.propose"],
+    "ops": ["health.read", "ticket.propose"],
+    "quant": ["research.submit", "research.result", "ticket.propose"]
+  },
+  "cut_free_tools": ["msg.send", "task.set", "task.update", "browse", "intake.read", "ticket.propose", "ticket.approve",
+                     "org.read", "org.propose", "health.read", "research.submit", "research.result", "grade.read",
+                     "lesson.propose", "reviewer.decide", "book.read_order", "book.read_position"],
+  "role_aliases": {"Site ops": "ops"},
+  "deferrable_reasons": ["work_unknown"],
+  "memory": {
+    "roles": ["Head", "Risk", "Executor", "Postmortem", "Site ops", "Quant", "Researcher", "Analyst", "Reviewer", "Chooser", "System"],
+    "quarantined": ["Head", "Quant", "Chooser"],
+    "source_keys": ["subject", "creator", "minute"]
+  },
+  "tickets": {"crew_ids": ["Operator", "Maintainer"], "approver_role": "head"},
+  "handoff_kinds": [["memo", "reviewer", "memo_to_reviewer"]],
+  "tables": {
+    "append_only": ["work_log"],
+    "private": ["outcome_notes"],
+    "columns": {
+      "work_log": {"epoch_id": "TEXT", "network_id": "TEXT", "item": "TEXT"},
+      "outcome_notes": {"candidate_seq": "INTEGER"}
+    },
+    "indexes": ["CREATE UNIQUE INDEX IF NOT EXISTS work_log_item ON work_log(epoch_id,network_id,item)"]
+  }
+}
