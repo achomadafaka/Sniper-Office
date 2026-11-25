@@ -9,7 +9,7 @@ connection. You supply a `step` function (your model call) and the tools.
 Python 3.11 or newer. No dependencies outside the standard library. SQLite needs FTS5 and JSON functions, which
 stock CPython builds include.
 
-Provenance: copied from the `sniper/office/` package of the private Sniper repository at commit `f07f79614` (2026-11-25), then made generic. Stage 1 of the plan in `/home/bigpapi/Desktop/office-extraction/DESIGN.md`.
+Provenance: copied from the `sniper/office/` package of the private Sniper repository at commit `f07f79614` (2026-11-25), then made generic. Stage 1 of the extraction plan: the durable core only.
 
 ## Try it
 
