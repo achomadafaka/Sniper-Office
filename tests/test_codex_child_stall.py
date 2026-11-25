@@ -36,3 +36,9 @@ def test_config_uses_http_only_provider(tmp_path):
     C.write_home(dict(account_id='a',model='m',system='s'),HOME=str(tmp_path))
     c=tomllib.load(open(tmp_path/'config.toml','rb'))
     assert c['model_provider']=='office_openai' and c['model_providers']['office_openai']['supports_websockets'] is False
+
+
+def test_provider_lock_detected(tmp_path):
+    import sniper_office.codex_child as C
+    p=tmp_path/'l';p.write_text("Error: Cannot change this thread's model provider from `openai`")
+    assert C.provider_locked(str(p)) and not C.provider_locked(str(tmp_path/'none'))

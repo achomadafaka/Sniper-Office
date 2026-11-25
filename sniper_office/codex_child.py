@@ -90,24 +90,42 @@ def relay(doc,stream,**limits):
     return session,usage,failed,stalled
 
 
+PROVIDER_LOCK="Cannot change this thread's model provider"
+
+
 def run(doc):
     write_home(doc)
     version=subprocess.run([CLI,'--version'],capture_output=True,text=True,timeout=30).stdout.split()[-1]
     env=dict(os.environ,**seat_forward.start(),CODEX_HOME=HOME,HOME='/opt/workspace',CODEX_CA_CERTIFICATE=CA,SSL_CERT_FILE=CA)
-    head=[CLI,'exec','--json','--skip-git-repo-check','--dangerously-bypass-approvals-and-sandbox']
-    argv=head+(['resume',doc['session_id'],'-'] if doc.get('session_id') else ['-'])
-    # The CLI's own log for the latest wake only (sandbox token is fake), so a hang shows where it stopped.
-    os.makedirs('/opt/workspace/tmp',exist_ok=True)
-    log=open('/opt/workspace/tmp/codex-wake.log','w')
     env.setdefault('RUST_LOG','warn,codex_core=info,codex_api=info,codex_client=info')
-    child=subprocess.Popen(argv,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=log,text=True,env=env,cwd='/opt/workspace')
-    child.stdin.write(doc['prompt']);child.stdin.close()
-    session,usage,failed,stalled=relay(doc,child.stdout)
-    if stalled:
-        child.kill();emit('error',reason='cli_stalled')
-    code=child.wait()
+    os.makedirs('/opt/workspace/tmp',exist_ok=True)
+    session,usage,failed,code=attempt(doc,env,doc.get('session_id'))
+    if doc.get('session_id') and provider_locked():
+        # A thread made before the HTTP-only provider cannot resume under it: start a fresh session with the same prompt (2026-11-25 provider switch).
+        emit('thought',text='session could not resume after the provider change; started a fresh session')
+        session,usage,failed,code=attempt(doc,env,None)
     emit('result',sdk_version=version,session_id=session,result_id=uuid.uuid4().hex,usage=usage,is_error=failed or code!=0)
     return code
+
+
+def provider_locked(path='/opt/workspace/tmp/codex-wake.log'):
+    try:
+        with open(path) as f:return PROVIDER_LOCK in f.read()
+    except OSError:return False
+
+
+def attempt(doc,env,session_id):
+    """One CLI run. Its log (fake token only) is the latest wake's, so a hang shows where it stopped."""
+    head=[CLI,'exec','--json','--skip-git-repo-check','--dangerously-bypass-approvals-and-sandbox']
+    argv=head+(['resume',session_id,'-'] if session_id else ['-'])
+    with open('/opt/workspace/tmp/codex-wake.log','w') as log:
+        child=subprocess.Popen(argv,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=log,text=True,env=env,cwd='/opt/workspace')
+        child.stdin.write(doc['prompt']);child.stdin.close()
+        session,usage,failed,stalled=relay(dict(doc,session_id=session_id),child.stdout)
+        if stalled:
+            child.kill();emit('error',reason='cli_stalled')
+        code=child.wait()
+    return session,usage,failed,code
 
 
 def poll(doc):
