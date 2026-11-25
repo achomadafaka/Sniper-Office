@@ -142,6 +142,9 @@ script-bearing seat text.
 
 ## 10. A project's animated floor
 
+The source project's floor is kept in this repository under `floor/` (page, style, scripts, fonts). It is that project's own
+content, not part of the package, and the project-word test skips that folder. Start it with `--floor-dir floor`.
+
 `--floor-dir DIR` shows a project's own floor at `/` and moves the operator page to `/operator`. `DIR` holds `floor.html` and its scripts, styles and fonts (`.html .js .css .ttf .woff2`). The files are listed once at start and served by exact URL, so a path cannot be built from a request; symlinks and other file types are not served.
 
 The floor reads `GET /api/office/feed` (roster, newest events, mail, tasks, per-seat activity, open requests, in the shape the original floor used) and `GET /api/office/explore` (answers `unknown`: this store has no book). Its message box posts to `POST /api/office/dm`, which has the same token, origin and size checks as the other writes; with no `--token-file` it answers 403 and the floor shows that.
