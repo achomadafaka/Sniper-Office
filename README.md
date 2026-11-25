@@ -105,6 +105,24 @@ PYTHONPATH=. python3 examples/evaluation_demo.py
 
 That runs a made-up team through two evaluated epochs and files the promotion ticket. A pass only ever files a ticket.
 
+Operator page (stage 5a to 5c). `docs/UI.md` is the design.
+
+| Module | What it holds |
+|---|---|
+| `ui` | A small local web server, standard library only. Overview of every seat, one seat's timeline, the mail. Two actions with a token: write to a seat, clear a park. |
+| `views` | The read models behind it: bounded, read-only, unknown never shown as zero. |
+
+```bash
+PYTHONPATH=. python3 examples/ui_demo_data.py /tmp/office-demo
+```
+
+```bash
+PYTHONPATH=. python3 -m sniper_office.ui --office-db /tmp/office-demo/office.db --quota-db /tmp/office-demo/quota.db
+```
+
+Then open http://127.0.0.1:8765. Add `--token-file` (a file only you can read, at least 24 characters) to enable the
+two actions; `--port` if 8765 is taken. Not built yet: requests, budget, evaluation and health views, project panels.
+
 The seat runtime needs Linux, `bwrap`, systemd user units and a dedicated system user (default `office`). It also
 needs the `cryptography` package on the host, and `claude-agent-sdk` and `playwright` inside the published runtime.
 `tests/test_walls.py` and `tests/test_browse_security.py` run the real sandbox when that user and runtime exist and

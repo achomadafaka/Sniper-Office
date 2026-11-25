@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Office</title>
+<link rel="icon" href="/favicon.ico">
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<header>
+  <h1>Office</h1>
+  <nav aria-label="Views"><a href="#/" id="nav-overview">Overview</a><a href="#/mail" id="nav-mail">Mail</a></nav>
+  <p id="status" role="status" aria-live="polite">Loading</p>
+  <button type="button" id="refresh">Refresh</button>
+</header>
+<details id="access">
+  <summary>Actions</summary>
+  <p id="access-note"></p>
+  <label for="token">Token</label>
+  <input id="token" type="password" autocomplete="off" spellcheck="false">
+</details>
+<main id="view" tabindex="-1"></main>
+<script src="/app.js"></script>
+</body>
+</html>

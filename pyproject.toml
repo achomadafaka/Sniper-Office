@@ -17,6 +17,9 @@ models = ["jsonschema", "referencing"]
 [tool.setuptools]
 packages = ["sniper_office", "sniper_office.tools"]
 
+[tool.setuptools.package-data]
+sniper_office = ["ui_static/*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]

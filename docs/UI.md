@@ -1,6 +1,8 @@
 # Stand-alone UI: design note
 
-Status: design only, nothing built. Stage 5 of `docs/DESIGN.md`. Written 2026-11-25.
+Status: 5a to 5c are built (`views`, `ui`, `ui_static/`): Overview, Seat and Mail, and the two write actions. The read models were written
+fresh against the package's tables, not moved from the source. Mail is a list, not a table, after a phone-width check. 5d to 5f are not built.
+Stage 5 of `docs/DESIGN.md`. Written 2026-11-25.
 Source read for this note, at source commit `73f57c051`: the web routes file for the existing page (223 lines), its
 template, the feed and floor read models, and three of its UI design documents (live floor, virtual office,
 readability).
