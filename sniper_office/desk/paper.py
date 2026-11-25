@@ -422,7 +422,7 @@ def _queued(tools, kind, **fields):
 NOT_FILLED = 'recorded as a paper request only: there is no fill, position or result until the desk filler process (python3 -m sniper_office.desk.filler) picks it up; it may never fill if the price is unknown'
 
 
-def paper_order(tools, ticket_id, reason, thesis=None, disproof=None, exit_plan=None, sl_pct=None, tp_pct=None, trail_pct=None):
+def paper_order(tools, ticket_id, reason, thesis=None, disproof=None, exit_plan=None, sl_pct=None, tp_pct=None, trail_pct=None, max_entry_price_usd=None):
     if not isinstance(ticket_id, str) or not ticket_id or len(ticket_id) > 256:
         raise ValueError('bad_arguments')
     if type(reason) is not str or not reason.strip() or len(reason) > 160:
@@ -430,6 +430,8 @@ def paper_order(tools, ticket_id, reason, thesis=None, disproof=None, exit_plan=
     plan = dict(thesis=thesis, disproof=disproof, exit_plan=exit_plan)
     if not all(isinstance(v, str) and v.strip() and len(v) <= 400 for v in plan.values()):
         return refused('plan_required', hint='thesis, disproof and exit_plan: each one non-empty line, at most 400 characters')
+    if max_entry_price_usd is not None and (type(max_entry_price_usd) not in (int, float) or not 0 < max_entry_price_usd < 1e9):
+        return refused('max_entry_price_invalid')
     role = role_of(tools)
     if role not in ORDER_ROLES:
         return refused('role_cannot_order')
@@ -467,7 +469,7 @@ def paper_order(tools, ticket_id, reason, thesis=None, disproof=None, exit_plan=
         if prior:
             return out(dict(state='duplicate', reason='coin_already_ordered', order_id=prior[0]), False)
     try:
-        request_id = _queued(tools, 'order', ticket_id=ticket_id, network_id=network_id, mint=mint, pool=pool, reason=reason, detail=dict(plan=plan, rails=rails))
+        request_id = _queued(tools, 'order', ticket_id=ticket_id, network_id=network_id, mint=mint, pool=pool, reason=reason, detail=dict(plan=plan, rails=rails, max_entry_price_usd=max_entry_price_usd))
     except sqlite3.IntegrityError:
         return out(dict(state='duplicate', reason='coin_already_requested'), False)
     return out(dict(state='queued', request_id=request_id, order_id=None, filled=False, note=NOT_FILLED))

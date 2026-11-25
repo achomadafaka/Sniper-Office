@@ -196,7 +196,21 @@ def snapshot(pair, now=None):
                 reserves=dict(base=num(liq.get('base')), quote=num(liq.get('quote')), base_token=(pair.get('baseToken') or {}).get('address'), quote_token=(pair.get('quoteToken') or {}).get('address'),
                               quote_symbol=(pair.get('quoteToken') or {}).get('symbol')),
                 liquidity_usd=num(liq.get('usd')), pair_created_at_ms=created, pair_age_s=None if created is None or now is None else round(now - created / 1000.),
-                fdv_usd=num(pair.get('fdv')), market_cap_usd=num(pair.get('marketCap')))
+                fdv_usd=num(pair.get('fdv')), market_cap_usd=num(pair.get('marketCap')), listed_links=listed_links(pair))
+
+
+def listed_links(pair):
+    """Website and social URLs the provider lists for the pair: untrusted claims, http(s) only, at most 10. None when the provider lists no info block."""
+    info = pair.get('info')
+    if not isinstance(info, dict):
+        return None
+    out = []
+    for kind, rows in (('website', info.get('websites')), ('social', info.get('socials'))):
+        for row in rows if isinstance(rows, list) else ():
+            url = row.get('url') if isinstance(row, dict) else None
+            if isinstance(url, str) and url.startswith(('https://', 'http://')) and len(url) <= 300:
+                out.append(dict(kind=kind, label=str(row.get('label') or row.get('type') or '')[:40], url=url))
+    return out[:10]
 
 
 def market_checks(pair, now, cfg, at):

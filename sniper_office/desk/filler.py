@@ -265,11 +265,14 @@ class Filler:
         if impact > pol['max_impact_bps']:
             return self.defer(req, 'impact_too_high', now)
         price = quote['price_usd'] * (1 + slip / 1e4)
+        cap = detail.get('max_entry_price_usd')
+        if finite(cap) and price > cap:
+            return self.defer(req, 'above_max_entry_price', now)
         qty, fee = clip / price, clip * pol['fee_bps'] / 1e4
         if self.cash(book) < clip + fee:
             self.outcome(req, 'censored', 'insufficient_capital', now)
             return 'censored'
-        proof = dict(quote, request_at=req['at'], filled_host_at=now_host, filled_at=now, slippage_bps=slip, impact_bps=impact, fill_price_usd=price, fee_bps=pol['fee_bps'], fee_usd=fee, note='priced from one provider lookup at fill time; no landing proof')
+        proof = dict(quote, request_at=req['at'], filled_host_at=now_host, filled_at=now, slippage_bps=slip, impact_bps=impact, fill_price_usd=price, max_entry_price_usd=cap, fee_bps=pol['fee_bps'], fee_usd=fee, note='priced from one provider lookup at fill time; no landing proof')
         try:
             self.ledger.execute('BEGIN IMMEDIATE')
             self.ledger.execute("INSERT INTO orders(order_id,book_id,epoch_id,network_id,mint,pool,state,requested_at,filled_at,spend_usd,costs_usd,qty,entry_price_usd,peak_value_usd,policy_json,fill_proof) VALUES(?,?,?,?,?,?,'open',?,?,?,?,?,?,?,?,?)",

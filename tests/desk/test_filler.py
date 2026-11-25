@@ -37,9 +37,9 @@ class Rig:
     def start(self):
         return F.Filler(self.cfg, clock=lambda: self.now, fetch=self.market)
 
-    def request(self, kind='order', rid='req1', order_id=None, rails=None, at=None):
+    def request(self, kind='order', rid='req1', order_id=None, rails=None, at=None, **detail):
         conn = sqlite3.connect(self.tmp / 'o.db')
-        conn.execute('INSERT INTO desk_paper_requests VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)', (rid, kind, 'ep', ACTOR, 1, at or self.now, 't1', 'solana', MINT, POOL, order_id, 'because', json.dumps(dict(rails=rails or {}))))
+        conn.execute('INSERT INTO desk_paper_requests VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)', (rid, kind, 'ep', ACTOR, 1, at or self.now, 't1', 'solana', MINT, POOL, order_id, 'because', json.dumps(dict(rails=rails or {}, **detail))))
         conn.commit(); conn.close()
 
     def tick(self, dt=5.):
@@ -153,3 +153,12 @@ def test_book_view_values_an_open_position_and_goes_unknown_when_the_mark_is_sta
         c.execute('UPDATE marks SET at=at-1000')
     _, view = call(t, 'book_view')
     assert view['equity']['state'] == 'unknown' and view['equity']['reason'] == 'position_unpriced' and view['equity']['usd'] is None and view['equity']['cash_usd'] == cash
+
+
+def test_max_entry_price_defers_then_fills_when_price_comes_back(tmp_path):
+    r = Rig(tmp_path)
+    r.request(max_entry_price_usd=1.0)   # fill price is 1.0 plus slippage: above the cap
+    assert r.tick()['results'] == ['deferred:above_max_entry_price']
+    r.market.price = 0.9
+    assert r.tick()['results'][0] == 'filled'
+    assert json.loads(r.q('SELECT fill_proof FROM orders')[0][0])['max_entry_price_usd'] == 1.0

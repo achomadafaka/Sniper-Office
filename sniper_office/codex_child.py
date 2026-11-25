@@ -2,6 +2,8 @@
 
 Native tools are on (Alpha's ruling); the walls are the sandbox and the proxies. Reads a JSON request on stdin, prints seat_child's event shape."""
 import base64
+import queue
+import threading
 import json
 import os
 import subprocess
@@ -36,7 +38,7 @@ def write_home(doc,HOME=HOME):
     env={k:os.environ[k] for k in ('PYTHONHOME','LD_LIBRARY_PATH') if k in os.environ}
     if 'model' not in doc:return   # the quota read needs only the token
     lines=['model=%s'%json.dumps(doc['model']),'model_reasoning_effort=%s'%json.dumps(doc.get('effort','medium')),'developer_instructions=%s'%json.dumps(doc['system']),
-           '[analytics]','enabled=false','[mcp_servers.office]','command=%s'%json.dumps(sys.executable),'args=%s'%json.dumps(['-c',seat_child.BRIDGE]),'tool_timeout_sec=3600','[mcp_servers.office.env]']+['%s=%s'%(k,json.dumps(v)) for k,v in env.items()]
+           '[analytics]','enabled=false','[mcp_servers.office]','command=%s'%json.dumps(sys.executable),'args=%s'%json.dumps(['-c',seat_child.BRIDGE]),'startup_timeout_sec=180','tool_timeout_sec=3600','[mcp_servers.office.env]']+['%s=%s'%(k,json.dumps(v)) for k,v in env.items()]
     with open(HOME+'/config.toml','w') as f:f.write('\n'.join(lines)+'\n')
 
 
@@ -45,20 +47,43 @@ def usage_of(raw):
     return dict(input_tokens=raw.get('input_tokens'),output_tokens=raw.get('output_tokens'),cache_read_input_tokens=raw.get('cached_input_tokens'),cache_creation_input_tokens=raw.get('cache_write_input_tokens'))
 
 
-def relay(doc,stream):
-    """Prints events as they arrive, so a killed wake can still resume. Returns (session, usage, failed)."""
-    session,usage,failed=doc.get('session_id'),None,False
-    for raw in stream:
+IDLE_S=900   # no CLI event and no tool call in flight: the CLI is stuck, not working (2026-11-25 hang after a failed MCP start)
+TOOL_S=3900  # a tool call in flight may take up to the MCP tool timeout
+
+
+def lines(stream,idle_s=IDLE_S,tool_s=TOOL_S,busy=lambda:False):
+    """Yields stream lines; stops with 'stalled' when nothing arrives within the limit. A tool call in flight gets the longer limit."""
+    q=queue.Queue()
+    def pump():
+        for raw in stream:q.put(raw)
+        q.put(None)
+    threading.Thread(target=pump,daemon=True).start()
+    while True:
+        try:raw=q.get(timeout=tool_s if busy() else idle_s)
+        except queue.Empty:
+            yield 'stalled';return
+        if raw is None:return
+        yield raw
+
+
+def relay(doc,stream,**limits):
+    """Prints events as they arrive, so a killed wake can still resume. Returns (session, usage, failed, stalled)."""
+    session,usage,failed,stalled,open_items=doc.get('session_id'),None,False,False,set()
+    for raw in lines(stream,busy=lambda:bool(open_items),**limits):
+        if raw=='stalled':stalled=True;break
         try:event=json.loads(raw)
         except ValueError:continue
         kind=event.get('type') if isinstance(event,dict) else None
+        item=event.get('item') if isinstance(event,dict) and isinstance(event.get('item'),dict) else {}
+        if kind=='item.started' and item.get('id'):open_items.add(item['id'])
+        elif kind=='item.completed':open_items.discard(item.get('id'))
         if kind=='thread.started':
             session=event.get('thread_id');emit('session',session_id=session)
-        elif kind=='item.completed' and isinstance(event.get('item'),dict) and event['item'].get('type') in ('agent_message','reasoning') and isinstance(event['item'].get('text'),str):
-            emit('thought',text=event['item']['text'][:4000])
+        elif kind=='item.completed' and item.get('type') in ('agent_message','reasoning') and isinstance(item.get('text'),str):
+            emit('thought',text=item['text'][:4000])
         elif kind=='turn.completed' and isinstance(event.get('usage'),dict):usage=usage_of(event['usage'])
         elif kind=='turn.failed':failed=True
-    return session,usage,failed
+    return session,usage,failed,stalled
 
 
 def run(doc):
@@ -69,7 +94,9 @@ def run(doc):
     argv=head+(['resume',doc['session_id'],'-'] if doc.get('session_id') else ['-'])
     child=subprocess.Popen(argv,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,text=True,env=env,cwd='/opt/workspace')
     child.stdin.write(doc['prompt']);child.stdin.close()
-    session,usage,failed=relay(doc,child.stdout)
+    session,usage,failed,stalled=relay(doc,child.stdout)
+    if stalled:
+        child.kill();emit('error',reason='cli_stalled')
     code=child.wait()
     emit('result',sdk_version=version,session_id=session,result_id=uuid.uuid4().hex,usage=usage,is_error=failed or code!=0)
     return code
