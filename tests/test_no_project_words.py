@@ -10,7 +10,7 @@ WORDS = ['meme' 'coin', 'wal' 'let', 'sol' 'ana', 'poly' 'market', 'pump' 'swap'
          'sni' r'per(?![-_ ]office)']
 CASED = [r'\b(?:Al' 'pha|Be' 'ta|Gam' 'ma|Del' 'ta|Eps' 'ilon|Ze' 'ta|Lam' 'bda)\b']    # the source project's crew names
 # The desk plug-in is the project that plugs in, shipped beside the runtime: its tool names and data are the domain. Only these paths are exempt; the runtime proper stays guarded.
-PLUGIN_PATHS = ('sniper_office/desk/', 'tests/desk/', 'docs/DESK.md', 'deploy/office-paper-filler.service', 'config/paper_filler.example.json', 'deploy/office-desk-feed.service', 'config/desk_feed.example.json', '.brain/')
+PLUGIN_PATHS = ('sniper_office/desk/', 'tests/desk/', 'docs/DESK.md', 'deploy/office-paper-filler.service', 'config/paper_filler.example.json', 'deploy/office-desk-feed.service', 'config/desk_feed.example.json', 'config/office_data_sources.example.json', '.brain/')
 PATTERN = re.compile('(?i:' + '|'.join(WORDS) + ')|' + '|'.join(CASED))
 
 
