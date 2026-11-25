@@ -24,11 +24,19 @@ A tool whose config key is missing, or whose file cannot be read, answers `{"sta
 | `wallet_network_db` | network_read, network_expand | `data/office/wallet_network.db` |
 | `brain_dir`, `brain_package`, `brain_python` | brain_read, brain_note | folder holding the Office's `.brain/` (this repo), the project-brain checkout, optional python |
 | `feed_window_s`, `feed_stale_s` | feed_list (defaults 3600, 900) | |
+| `sheet_live` | sheet_read: false skips the live pool re-read and the 60 s trades (default true) | |
+| `ticket_wakes`, `ticket_wake_min_s` | wake source: true to be woken for new feed passes, at most one wake per `ticket_wake_min_s` (default 300); never for researcher or narrative | |
+| `alert_loss_pct`, `alert_gain_pct`, `alert_trail_arm_pct`, `alert_mark_max_age_s`, `wake_lookback_s` | position alerts (15, 50, 20, 300) and how far back a closed order may still wake (86400) | |
+
+Feed collector config (`desk_feed.json`) adds `min_prints_m5` (default 2): a pair with fewer m5 trades has an unknown chart check, so SKIP.
 
 ## What each tool is here
 
 - `results_view`, `book_view`, `candidate_register`, `feed_filter_set`, `book_halt`: real, against the ledger files (read-only) and the seat's own office db (tables `desk_*`). `book_view` equity is cash for a flat book; with positions open it is cash plus each position's newest mark (modelled net exit value) when every mark is fresher than `mark_max_age_s` (120 s); otherwise `unknown`, `position_unpriced`, cash shown. The source project's old ledgers carry no USD marks, so their open positions stay `unknown`.
-- `feed_list`, `sheet_read`: the stored hard-filter passes and their stored evidence, state `partial`. The near-pass feed and the live sheet builder stay in the source project. A desk db whose newest ticket is older than `feed_stale_s` is `unknown`, not an empty feed.
+- `feed_list`: the stored hard-filter passes, state `partial`. Freshness is the collector's (newest ticket of any verdict, or newest `feed_seen`), not the passes': a live collector with no pass in the window answers `known`, empty, with `collector` (heartbeat age, PASS/SKIP counts, top SKIP reasons); a collector older than `feed_stale_s` is `unknown`.
+- `sheet_read`: tickets carry `evidence.market` (DexScreener run-up m5..h24, volume, txns, reserves, liquidity, age, fdv/mcap at decision time). `sheet_read` shows it apart from `now_read` (a fresh DexScreener read with its own fetch time) and `trades_60s` (GeckoTerminal recent trades, with coverage). `known` when all of that is complete, else `partial` with a `missing` list. cluster and dump_group stay unknown (not collected here). Provider claims, not fills.
+- `market_data` (group `market`): the same DexScreener read for a mint or pool, host side, labelled not a fill price.
+- Wake sources (`wakes.py`): `new_ticket` (rate limited, once per ticket per seat, honours the seat's feed filter), `order_closed` (the book's judge, once per order) and `position_alert` (urgent; loss, gain, trail armed, once per order and trigger). Once-only state is `desk_wakes` in the seat's office db.
 - `paper_order`, `paper_exit`: checked (role, plan, rails, halt, one entry per coin, order open in the book), then recorded in `desk_paper_requests` with state `queued`, `filled: false`. `filler.py` fills them (below).
 - `chain_*`, `network_*`: the source project's read-only chain data and wallet network, ported as `chain_data.py` and `wallet_network.py`.
 - `brain_*`: the Office's own project brain (`.brain/` in this repo, started with `brain init`). `brain_read` runs `brain ask`. `brain_note` records the text as a `note` episode, then writes an unverified `observation` fact on `actor:<role>` citing it. The seat's `role` is its brain role.

@@ -13,6 +13,7 @@ import uuid
 
 from .. import clock as K
 from ..seat_tools import MAX_OUTPUT, result
+from . import market as M
 
 MAX_SHEET = 48000
 RESULTS_MAX = 60
@@ -126,23 +127,37 @@ def _stamp(value):
 
 
 def _stored_tickets(tools, now, limit):
-    """Newest hard-filter PASS tickets in the desk db: (rows, None) or (None, typed refusal). A db whose newest row is older than feed_stale_s is unknown, not an empty feed."""
+    """(PASS rows in the window, feed stats, None) or (None, None, typed refusal). Freshness is the collector's, not the passes': the newest ticket of any verdict, or the newest coin it first
+    saw (feed_seen), whichever is later. A collector older than feed_stale_s is unknown, not an empty feed; a live collector with no passing ticket is a known empty feed with its counts."""
     path = path_of(tools, 'desk_db')
     if path is None:
-        return None, unknown('desk_config_unknown')
+        return None, None, unknown('desk_config_unknown')
     stale = tools.cfg.get('feed_stale_s', 900)
     window = tools.cfg.get('feed_window_s', 3600)
     try:
         with closing(ro(path)) as conn:
             rows = conn.execute("SELECT ticket_id,mint,pool,ts,substr(inputs_json,1,65536) FROM desk_tickets WHERE stage='hard_filter' AND verdict='PASS' ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+            recent = conn.execute("SELECT verdict,reason,ts FROM desk_tickets WHERE stage='hard_filter' ORDER BY id DESC LIMIT 2000").fetchall()
+            try:
+                seen = conn.execute('SELECT max(first_seen) FROM feed_seen').fetchone()[0]
+            except sqlite3.Error:   # a source-project desk db has no feed_seen
+                seen = None
     except (OSError, sqlite3.Error):
-        return None, unknown('desk_unreadable')
-    newest = _stamp(rows[0][3]) if rows else None
-    if newest is None:
-        return None, unknown('desk_has_no_dated_tickets')
-    if now - newest > stale:
-        return None, unknown('desk_stale', newest_age_s=round(now - newest), stale_after_s=stale)
-    return [r for r in rows if (_stamp(r[3]) or 0) >= now - window], None
+        return None, None, unknown('desk_unreadable')
+    stamps = [s for s in (_stamp(r[2]) for r in recent) if s is not None]
+    beat = max(stamps + ([float(seen)] if type(seen) in (int, float) and math.isfinite(seen) else []), default=None)
+    if beat is None:
+        return None, None, unknown('desk_has_no_dated_tickets')
+    if now - beat > stale:
+        return None, None, unknown('desk_stale', newest_age_s=round(now - beat), stale_after_s=stale)
+    inside = [(v, why) for v, why, ts in recent if (_stamp(ts) or 0) >= now - window]
+    skips = {}
+    for v, why in inside:
+        if v != 'PASS':
+            skips[why] = skips.get(why, 0) + 1
+    feed = dict(heartbeat_age_s=round(now - beat), window_s=window, pass_n=sum(v == 'PASS' for v, _ in inside), skip_n=sum(v != 'PASS' for v, _ in inside),
+                top_skip_reasons=[dict(reason=k, n=n) for k, n in sorted(skips.items(), key=lambda kv: (-kv[1], kv[0]))[:5]])
+    return [r for r in rows if (_stamp(r[3]) or 0) >= now - window], feed, None
 
 
 def _checks(blob):
@@ -163,7 +178,7 @@ def feed_list(tools, include_hidden=False):
     now = _now(tools)
     if now is None:
         return unknown('clock_unknown')
-    rows, bad = _stored_tickets(tools, now, 200)
+    rows, feed, bad = _stored_tickets(tools, now, 200)
     if bad:
         return bad
     with closing(own(tools)) as conn, conn:
@@ -182,8 +197,8 @@ def feed_list(tools, include_hidden=False):
                 items.append(item)
             elif include_hidden is True:
                 items.append(dict(item, hidden_by=rule))
-    doc = dict(state='partial', feed='stored_hard_filter_pass', items=items[:FEED_MAX], hidden_count=hidden,
-               note='stored hard-filter passes from the desk db, newest first; the near-pass feed, run-up, closes and followed-wallet facts are not built here')
+    doc = dict(state='partial' if rows else 'known', feed='stored_hard_filter_pass', items=items[:FEED_MAX], hidden_count=hidden, collector=feed,
+               note='stored hard-filter passes from the desk db, newest first; collector is the feed heartbeat and the counts in the window, so an empty list from a live feed is known, not unknown; the near-pass feed, run-up, closes and followed-wallet facts are not built here')
     dropped = 0
     while doc['items'] and len(json.dumps(doc, default=str)) > MAX_OUTPUT:   # never a silent prefix
         doc['items'].pop()
@@ -204,6 +219,46 @@ def feed_filter_set(tools, rules, reason, after_case=None):
         conn.execute('INSERT INTO desk_feed_filters(epoch_id,actor_id,at,rules_json,reason,after_case) VALUES(?,?,?,?,?,?)',
                      (tools.epoch, tools.actor, tools.clock(), json.dumps(rules), reason[:500], None if after_case is None else str(after_case)[:128]))
     return out(dict(state='known', rules=rules))
+
+
+CORE = (('run_up_pct', 'h1'), ('volume_usd', 'h1'), ('liquidity_usd', None), ('reserves', 'quote'), ('reserves', 'base'), ('pair_created_at_ms', None), ('fdv_usd', None))
+
+
+def _sheet(tools, evidence, row):
+    """The sheet parts built here, decision-time facts (the ticket) kept apart from the live re-read (now_read, with its own fetch time). known only when the core is complete: decision-time
+    run-up/volume/reserves/liquidity/age/fdv, the live re-read, and 60 s trade coverage. cluster and dump_group are not collected here and never block it."""
+    dec = evidence.get('market') if isinstance(evidence.get('market'), dict) else None
+    missing = []
+    if dec is None:
+        missing.append(dict(part='decision_time_market', reason='ticket_predates_market_snapshot'))
+    else:
+        for k, sub in CORE:
+            v = dec.get(k)
+            v = v.get(sub) if sub and isinstance(v, dict) else v
+            if v is None and not (k == 'fdv_usd' and dec.get('market_cap_usd') is not None):
+                missing.append(dict(part='decision_time_%s%s' % (k, '.' + sub if sub else ''), reason='provider_did_not_send'))
+    sheet = dict(decision_time=dec and dict(dec, pair_age_s_at_ticket=None if dec.get('pair_created_at_ms') is None else round((_stamp(row[4]) or 0) - dec['pair_created_at_ms'] / 1000.)),
+                 cluster=(evidence.get('checks') or {}).get('cluster') or dict(status='unknown', reason='not_collected_here'),
+                 dump_group=(evidence.get('checks') or {}).get('dump_group') or dict(status='unknown', reason='not_collected_here'))
+    if tools.cfg.get('sheet_live', True) is False:
+        missing += [dict(part='now_read', reason='sheet_live_off'), dict(part='trades_60s', reason='sheet_live_off')]
+        return dict(state='partial', reason='sheet_incomplete', missing=missing, sheet=sheet)
+    now = _now(tools) or tools.clock()
+    snap, at, why = M.read_pair(mint=row[0], pool=row[1])
+    if snap is None:
+        sheet['now_read'] = dict(state='unknown', reason=why, source='dexscreener:pairs', fetched_at=at)
+        missing.append(dict(part='now_read', reason=why))
+    else:
+        d0 = (dec or {}).get('price_usd')
+        sheet['now_read'] = dict(state='known', source='dexscreener:pairs', fetched_at=at, age_vs_ticket_s=round(at - (_stamp(row[4]) or at)), snapshot=snap,
+                                 price_change_since_ticket_pct=round((snap['price_usd'] / d0 - 1.) * 100., 4) if d0 and snap['price_usd'] else None, note='provider claim, not a fill price')
+    trades = M.trades_window(row[1] or (snap or {}).get('pair'), now) if (row[1] or snap) else dict(state='unknown', reason='pool_unknown')
+    sheet['trades_60s'] = trades
+    if trades['state'] != 'known':
+        missing.append(dict(part='trades_60s', reason=trades['reason']))
+    if missing:
+        return dict(state='partial', reason='sheet_incomplete', missing=missing, sheet=sheet)
+    return dict(state='known', missing=[], sheet=sheet)
 
 
 def sheet_read(tools, ticket_id):
@@ -227,11 +282,14 @@ def sheet_read(tools, ticket_id):
         evidence = None
     if not isinstance(evidence, dict):
         return unknown('ticket_evidence_unreadable', ticket_id=ticket_id)
-    doc = dict(state='partial', reason='full_sheet_not_built_here', ticket_id=ticket_id, mint=row[0], pool=row[1], hard_filter=dict(verdict=row[2], reason=row[3], at=row[4]),
-               evidence=evidence, note='the stored hard-filter evidence for this ticket; the live sheet (pool state, flow, safety evidence) is not rebuilt in this package')
+    doc = dict(ticket_id=ticket_id, mint=row[0], pool=row[1], hard_filter=dict(verdict=row[2], reason=row[3], at=row[4]), **_sheet(tools, evidence, row))
+    doc['evidence'] = evidence
     text = json.dumps(doc, default=str, separators=(',', ':'))
     if len(text) > MAX_SHEET:
-        text = json.dumps(dict(state='partial', reason='sheet_too_large', sheet_bytes=len(text)))
+        doc.pop('evidence')   # the sheet parts are the bounded ones; the full stored evidence is what overflows
+        text = json.dumps(dict(doc, evidence_omitted='too_large'), default=str, separators=(',', ':'))
+        if len(text) > MAX_SHEET:
+            text = json.dumps(dict(state='partial', reason='sheet_too_large', sheet_bytes=len(text)))
     return result(text, False)
 
 

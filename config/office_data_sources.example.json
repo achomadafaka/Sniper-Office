@@ -1,0 +1,208 @@
+{
+ "sources": {
+  "desk": "/srv/office/run/data/desk.db",
+  "ledger": "/srv/office/run/data/ledger.db",
+  "history_desk": "/srv/office/run/data/history/desk.db",
+  "history_explore": "/srv/office/run/data/history/explore-ledger.db",
+  "history_explore_gpt": "/srv/office/run/data/history/explore-gpt-ledger.db"
+ },
+ "tables": {
+  "desk_tickets": {
+   "source": "desk",
+   "time_column": "ts",
+   "time_kind": "iso",
+   "columns": [
+    "ticket_id",
+    "network_id",
+    "mint",
+    "pool",
+    "stage",
+    "verdict",
+    "reason",
+    "ts"
+   ]
+  },
+  "orders": {
+   "source": "ledger",
+   "time_column": "requested_at",
+   "time_kind": "epoch",
+   "columns": [
+    "order_id",
+    "book_id",
+    "epoch_id",
+    "network_id",
+    "mint",
+    "pool",
+    "state",
+    "reason",
+    "requested_at",
+    "filled_at",
+    "closed_at",
+    "spend_usd",
+    "exit_usd",
+    "costs_usd",
+    "exit_reason",
+    "exit_fill_kind",
+    "qty",
+    "entry_price_usd",
+    "peak_value_usd"
+   ]
+  },
+  "marks": {
+   "source": "ledger",
+   "time_column": "at",
+   "time_kind": "epoch",
+   "columns": [
+    "id",
+    "order_id",
+    "at",
+    "price_usd",
+    "value_usd",
+    "source",
+    "reason"
+   ]
+  },
+  "cashflows": {
+   "source": "ledger",
+   "time_column": "at",
+   "time_kind": "epoch",
+   "columns": [
+    "order_id",
+    "kind",
+    "at",
+    "usd"
+   ]
+  },
+  "request_outcomes": {
+   "source": "ledger",
+   "time_column": "at",
+   "time_kind": "epoch",
+   "columns": [
+    "request_id",
+    "kind",
+    "outcome",
+    "reason",
+    "at"
+   ]
+  },
+  "history_desk_tickets": {
+   "source": "history_desk",
+   "source_table": "desk_tickets",
+   "time_column": "ts",
+   "time_kind": "iso",
+   "columns": [
+    "ticket_id",
+    "network_id",
+    "mint",
+    "pool",
+    "stage",
+    "seat",
+    "verdict",
+    "reason",
+    "ts"
+   ]
+  },
+  "explore_orders": {
+   "source": "history_explore",
+   "source_table": "orders",
+   "time_column": "requested_at",
+   "time_kind": "epoch",
+   "columns": [
+    "order_id",
+    "book_id",
+    "epoch_id",
+    "network_id",
+    "mint",
+    "pool",
+    "state",
+    "reason",
+    "requested_at",
+    "filled_at",
+    "closed_at",
+    "spend_usd",
+    "exit_usd",
+    "costs_usd",
+    "exit_reason",
+    "exit_fill_kind",
+    "entry_unit_price_usd"
+   ]
+  },
+  "explore_marks": {
+   "source": "history_explore",
+   "source_table": "marks",
+   "time_column": "at",
+   "time_kind": "epoch",
+   "columns": [
+    "id",
+    "order_id",
+    "at",
+    "lamports",
+    "source",
+    "reason"
+   ]
+  },
+  "explore_cashflows": {
+   "source": "history_explore",
+   "source_table": "cashflows",
+   "time_column": "at",
+   "time_kind": "epoch",
+   "columns": [
+    "order_id",
+    "kind",
+    "at",
+    "usd"
+   ]
+  },
+  "explore_gpt_orders": {
+   "source": "history_explore_gpt",
+   "source_table": "orders",
+   "time_column": "requested_at",
+   "time_kind": "epoch",
+   "columns": [
+    "order_id",
+    "book_id",
+    "epoch_id",
+    "network_id",
+    "mint",
+    "pool",
+    "state",
+    "reason",
+    "requested_at",
+    "filled_at",
+    "closed_at",
+    "spend_usd",
+    "exit_usd",
+    "costs_usd",
+    "exit_reason",
+    "exit_fill_kind",
+    "entry_unit_price_usd"
+   ]
+  },
+  "explore_gpt_marks": {
+   "source": "history_explore_gpt",
+   "source_table": "marks",
+   "time_column": "at",
+   "time_kind": "epoch",
+   "columns": [
+    "id",
+    "order_id",
+    "at",
+    "lamports",
+    "source",
+    "reason"
+   ]
+  },
+  "explore_gpt_cashflows": {
+   "source": "history_explore_gpt",
+   "source_table": "cashflows",
+   "time_column": "at",
+   "time_kind": "epoch",
+   "columns": [
+    "order_id",
+    "kind",
+    "at",
+    "usd"
+   ]
+  }
+ }
+}

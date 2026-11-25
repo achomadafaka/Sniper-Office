@@ -34,7 +34,7 @@ HOSTS = {'api.dexscreener.com': 'dexscreener', 'api.geckoterminal.com': 'geckote
 RPC_METHODS = ('getAccountInfo', 'getMultipleAccounts', 'getTokenLargestAccounts', 'getTokenSupply')
 MAX_BODY = 2_000_000
 DEFAULTS = dict(desk_db='desk.db', interval_s=60., max_new_per_cycle=15, retry_unknown_s=300., retention_days=7., max_rows=20000, probe_sol=0.1,
-                mcap_safety=[5000., 50_000_000.], liq_min_quote_sol=10., round_trip_loss_pct_max=8., max_pair_age_s=86400., min_interval_s=dict(dexscreener=1., geckoterminal=2.5, jupiter=1.2, rpc=0.2))
+                mcap_safety=[5000., 50_000_000.], liq_min_quote_sol=10., round_trip_loss_pct_max=8., max_pair_age_s=86400., min_prints_m5=2, min_interval_s=dict(dexscreener=1., geckoterminal=2.5, jupiter=1.2, rpc=0.2))
 SCHEMA = '''
 CREATE TABLE IF NOT EXISTS desk_tickets(id INTEGER PRIMARY KEY, ticket_id TEXT NOT NULL, network_id TEXT NOT NULL, mint TEXT NOT NULL, pool TEXT, stage TEXT NOT NULL, verdict TEXT NOT NULL,
   reason TEXT NOT NULL, ts TEXT NOT NULL, inputs_json TEXT NOT NULL, UNIQUE(ticket_id, stage));
@@ -179,6 +179,22 @@ def best_pair(doc, mint):
     return max(pairs, key=lambda p: num((p.get('liquidity') or {}).get('usd')) or 0., default=None)
 
 
+def snapshot(pair, now=None):
+    """The provider's numbers for one pair, as received: run-up (priceChange), volume, txns, reserves, liquidity, age, fdv/mcap. A missing window stays None, never zero."""
+    g = lambda d, k: d.get(k) if isinstance(d, dict) else None
+    windows = ('m5', 'h1', 'h6', 'h24')
+    txns = pair.get('txns') if isinstance(pair.get('txns'), dict) else {}
+    liq = pair.get('liquidity') if isinstance(pair.get('liquidity'), dict) else {}
+    created = num(pair.get('pairCreatedAt'))
+    return dict(dex=pair.get('dexId'), pair=pair.get('pairAddress'), price_usd=num(pair.get('priceUsd')), price_native=num(pair.get('priceNative')),
+                run_up_pct={w: num(g(pair.get('priceChange'), w)) for w in windows}, volume_usd={w: num(g(pair.get('volume'), w)) for w in windows},
+                txns={w: dict(buys=num(g(txns.get(w), 'buys')), sells=num(g(txns.get(w), 'sells'))) for w in windows},
+                reserves=dict(base=num(liq.get('base')), quote=num(liq.get('quote')), base_token=(pair.get('baseToken') or {}).get('address'), quote_token=(pair.get('quoteToken') or {}).get('address'),
+                              quote_symbol=(pair.get('quoteToken') or {}).get('symbol')),
+                liquidity_usd=num(liq.get('usd')), pair_created_at_ms=created, pair_age_s=None if created is None or now is None else round(now - created / 1000.),
+                fdv_usd=num(pair.get('fdv')), market_cap_usd=num(pair.get('marketCap')))
+
+
 def market_checks(pair, now, cfg, at):
     """market_data, liquidity, mcap, chart (age + activity), flow: all from one DexScreener pair, which is a provider claim."""
     src = 'dexscreener:pairs'
@@ -206,7 +222,11 @@ def market_checks(pair, now, cfg, at):
     else:
         age = now - created / 1000.
         old = age > cfg['max_pair_age_s']
-        checks['chart'] = check('kill' if old else 'pass', 'pair_too_old' if old else 'age_and_activity_present', src, at, age_s=round(age), max_age_s=cfg['max_pair_age_s'], txns_m5=txns)
+        prints = (num(txns.get('buys')) or 0.) + (num(txns.get('sells')) or 0.)
+        # Sniper's chart rule: fewer than 2 recent prints is an unknown chart (chart_60s_prints_lt_2), never a pass; here the window is the provider's m5 count
+        quiet = prints < cfg['min_prints_m5']
+        checks['chart'] = check('kill' if old else 'unknown' if quiet else 'pass', 'pair_too_old' if old else 'chart_prints_lt_2' if quiet else 'age_and_activity_present', src, at, age_s=round(age), max_age_s=cfg['max_pair_age_s'],
+                                txns_m5=txns, prints_m5=prints, min_prints_m5=cfg['min_prints_m5'])
     buys, sells = (num(txns.get(k)) if isinstance(txns, dict) else None for k in ('buys', 'sells'))
     if buys is not None and sells is not None and buys >= 20 and sells == 0:
         checks['flow'] = check('kill', 'buys_without_sells', src, at, buys_m5=buys, sells_m5=sells)
@@ -325,15 +345,17 @@ class Feed:
             return None   # not indexed yet, or the provider failed: retried until retry_unknown_s, then written as unknown
         pool = pair['pairAddress']
         checks = market_checks(pair, now, self.cfg, at)
+        market = dict(snapshot(pair, now), source='dexscreener:pairs', fetched_at=at, note='provider claim at decision time')
         checks.update(token_checks(self.net, self.clock, mint, pool))
         checks['sell_probe'] = sell_probe(self.net, self.clock, mint, self.cfg['probe_sol'])
         checks['cluster'] = check('unknown', 'not_collected_here', 'none', at)
         checks['dump_group'] = check('unknown', 'not_collected_here', 'none', at)
         v, reason = verdict(checks, self.cfg)
-        return self.row(mint, pool, source, claim, now, checks, v, reason)
+        return self.row(mint, pool, source, claim, now, checks, v, reason, market)
 
-    def row(self, mint, pool, source, claim, now, checks, v, reason):
+    def row(self, mint, pool, source, claim, now, checks, v, reason, market=None):
         evidence = dict(network_id='solana', mint=mint, pool=pool, known_at=datetime.fromtimestamp(claim['fetched_at'], timezone.utc).isoformat(), checks=checks,
+                        market=market,
                         discovery=dict(source=source, **claim), policy=dict(round_trip_loss_pct_max=self.cfg['round_trip_loss_pct_max'], liq_min_quote_sol=self.cfg['liq_min_quote_sol'], mcap_safety=self.cfg['mcap_safety'],
                                                                          max_pair_age_s=self.cfg['max_pair_age_s'], probe_sol=self.cfg['probe_sol']))
         ticket_id = 'office:feed:' + hashlib.sha256(('solana:%s:%s' % (mint, pool)).encode()).hexdigest()[:32]

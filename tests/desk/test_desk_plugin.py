@@ -13,7 +13,7 @@ from sniper_office.desk import chain_data as C, wallet_network as N
 
 NOW = 1_800_000_000.
 SOL = '11111111111111111111111111111111'
-GROUPS = ['paper', 'chain', 'network', 'brain']
+GROUPS = ['paper', 'chain', 'network', 'brain', 'market']
 
 
 def write_json(path, doc):
@@ -74,7 +74,7 @@ def call(t, name, **args):
 def test_registration_names_every_ported_tool_in_its_group_and_a_seat_without_the_group_cannot_name_it(tmp_path, monkeypatch):
     host = P.load(dict(plugins=['sniper_office.desk']))
     expected = {'results_view', 'book_view', 'sheet_read', 'feed_list', 'feed_filter_set', 'candidate_register', 'paper_order', 'paper_exit', 'book_halt', 'network_read', 'network_expand',
-                'chain_wallet_history', 'chain_transaction', 'chain_funding_trace', 'chain_token_holders', 'brain_read', 'brain_note'}
+                'chain_wallet_history', 'chain_transaction', 'chain_funding_trace', 'chain_token_holders', 'brain_read', 'brain_note', 'market_data'}
     assert set(host.tools) == expected
     assert {t.group for t in host.tools.values()} == set(GROUPS)
     assert not any('order' in n and host.tools[n].group != 'paper' for n in host.tools)
@@ -121,7 +121,7 @@ def test_feed_list_shows_fresh_stored_passes_applies_the_seats_filter_and_a_stal
 def test_sheet_read_is_partial_stored_evidence_and_an_unknown_ticket_is_refused(tmp_path, monkeypatch):
     t = seat(tmp_path, monkeypatch, cfg=dict(desk_db=desk(tmp_path / 'd.db', [ticket('a', 5)])))
     error, doc = call(t, 'sheet_read', ticket_id='a')
-    assert not error and doc['state'] == 'partial' and doc['reason'] == 'full_sheet_not_built_here' and doc['evidence']['checks']['holders']['top10_pct'] == 12.5
+    assert not error and doc['state'] == 'partial' and doc['reason'] == 'sheet_incomplete' and doc['missing'][0]['part'] == 'decision_time_market' and doc['evidence']['checks']['holders']['top10_pct'] == 12.5
     assert call(t, 'sheet_read', ticket_id='nope')[1] == dict(state='refused', reason='ticket_unknown')
     assert call(t, 'sheet_read', ticket_id='')[1] == 'bad_arguments'
 
