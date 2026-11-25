@@ -37,8 +37,11 @@ def write_home(doc,HOME=HOME):
         json.dump(dict(auth_mode='chatgptAuthTokens',OPENAI_API_KEY=None,tokens=dict(id_token=token,access_token=token,account_id=doc['account_id'],refresh_token=''),last_refresh='2026-10-30T00:00:00Z'),f)
     env={k:os.environ[k] for k in ('PYTHONHOME','LD_LIBRARY_PATH') if k in os.environ}
     if 'model' not in doc:return   # the quota read needs only the token
-    lines=['model=%s'%json.dumps(doc['model']),'model_reasoning_effort=%s'%json.dumps(doc.get('effort','medium')),'developer_instructions=%s'%json.dumps(doc['system']),
-           '[features]','apps=false','plugins=false','[analytics]','enabled=false','[mcp_servers.office]','command=%s'%json.dumps(sys.executable),'args=%s'%json.dumps(['-c',seat_child.BRIDGE]),'startup_timeout_sec=180','tool_timeout_sec=3600','[mcp_servers.office.env]']+['%s=%s'%(k,json.dumps(v)) for k,v in env.items()]
+    # Websocket transport bypasses HTTPS_PROXY and has no route out of the sandbox, so every websocket attempt fails and the CLI backs off (2026-11-25 seat stalls).
+    # Built-in providers cannot be overridden: same endpoint under our own id, HTTP streaming only, which the host proxy carries.
+    provider=['[model_providers.office_openai]','name="OpenAI"','base_url="https://chatgpt.com/backend-api/codex"','wire_api="responses"','requires_openai_auth=true','supports_websockets=false']
+    lines=['model=%s'%json.dumps(doc['model']),'model_provider="office_openai"','model_reasoning_effort=%s'%json.dumps(doc.get('effort','medium')),'developer_instructions=%s'%json.dumps(doc['system']),
+           '[features]','apps=false','plugins=false','[analytics]','enabled=false','[mcp_servers.office]','command=%s'%json.dumps(sys.executable),'args=%s'%json.dumps(['-c',seat_child.BRIDGE]),'startup_timeout_sec=180','tool_timeout_sec=3600','[mcp_servers.office.env]']+['%s=%s'%(k,json.dumps(v)) for k,v in env.items()]+provider
     with open(HOME+'/config.toml','w') as f:f.write('\n'.join(lines)+'\n')
 
 

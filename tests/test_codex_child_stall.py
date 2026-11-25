@@ -28,3 +28,11 @@ def test_non_tool_item_does_not_extend_the_limit():
             yield json.dumps(dict(type='item.started',item=dict(id='r',type='reasoning')))
             time.sleep(2)
     assert C.relay({},Slow(),idle_s=0.3,tool_s=5)[3] is True
+
+
+def test_config_uses_http_only_provider(tmp_path):
+    import tomllib
+    import sniper_office.codex_child as C
+    C.write_home(dict(account_id='a',model='m',system='s'),HOME=str(tmp_path))
+    c=tomllib.load(open(tmp_path/'config.toml','rb'))
+    assert c['model_provider']=='office_openai' and c['model_providers']['office_openai']['supports_websockets'] is False
