@@ -105,7 +105,7 @@ def _brain(tools, op, text):
     if not isinstance(text, str) or not text.strip() or len(text) > 4000:
         return P.refused('text_invalid')
     try:
-        done = subprocess.run([tools.cfg.get('brain_python') or sys.executable, str(script), '--env-file', str(env), op, '--actor', tools.actor, text], capture_output=True, text=True, timeout=30)
+        done = subprocess.run([tools.cfg.get('brain_python') or sys.executable, str(script), '--env-file', str(env), op, '--actor', tools.actor, '--', text], capture_output=True, text=True, timeout=30)
     except (OSError, subprocess.SubprocessError):
         return P.unknown('brain_unavailable')
     if op == 'read':
