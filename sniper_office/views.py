@@ -6,6 +6,8 @@ at the bottom, which only call functions the seat runtime already has."""
 from contextlib import contextmanager
 import json
 import math
+import os
+from pathlib import Path
 import sqlite3
 import time
 
@@ -315,6 +317,291 @@ def health(office_db, *, now, verify=False):
     except sqlite3.Error as exc:
         return dict(out, reason='store_unavailable:' + type(exc).__name__)
     return out
+
+
+# ---- the animated floor: the shape the pixel office reads from /api/office/feed
+
+FLOOR_PARTS = ('roster', 'events', 'mail', 'tasks', 'seats', 'questions')
+
+
+def _text(v, maximum=4096, *, empty=False):
+    return isinstance(v, str) and (empty or bool(v)) and len(v.encode('utf-8')) <= maximum
+
+
+def _cursor(v):
+    if v is None:
+        return None
+    if not isinstance(v, str) or not v.isascii() or not v.isdecimal() or len(v) > 19 or int(v) > 9223372036854775807:
+        raise ValueError('cursor_invalid')
+    return int(v)
+
+
+def _floor_part(reason=None):
+    return dict(state='unknown' if reason else 'known', items=[], limited=False, omitted=0, cursor=None, reason=reason)
+
+
+def _host_state(office_db, seat):
+    """The seat host's own state file next to the store (seat-<role>.json): sleep_until and parked_reason. Read only if small, regular and the same incarnation."""
+    path = Path(office_db).resolve().parent / ('seat-%s.json' % seat['role'].lower())
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        try:
+            if os.fstat(fd).st_size > 16384:
+                return {}
+            doc = json.loads(os.read(fd, 16385))
+        finally:
+            os.close(fd)
+        return doc if isinstance(doc, dict) and doc.get('incarnation') == seat['incarnation'] else {}
+    except (OSError, ValueError, TypeError):
+        return {}
+
+
+def _floor_metrics(quota, seat, now):
+    if quota is None:
+        return dict(wakes_today=None, tokens_today=None, tokens_known=None, tokens_unknown_wakes=None)
+    row = quota.execute("SELECT count(*),sum(CASE WHEN state='known' AND typeof(used)='integer' AND used>=0 THEN used ELSE 0 END),"
+                        "sum(CASE WHEN state!='known' OR used IS NULL OR typeof(used)!='integer' OR used<0 THEN 1 ELSE 0 END) FROM quota_wakes WHERE actor_id=? AND ended_at>=? AND ended_at<=?",
+                        (seat['actor_id'], now // DAY * DAY, now)).fetchone()
+    return dict(wakes_today=row[0], tokens_today=(row[1] or 0) if not row[2] else None, tokens_known=row[1] or 0, tokens_unknown_wakes=row[2] or 0)
+
+
+def _floor_seats(conn, quota, office_db, roster, now):
+    out = []
+    for seat in roster:
+        rows = conn.execute('SELECT event_id,kind,text,state,corrected_at,refs_json,truncated FROM office_v2_events WHERE actor_id=? AND epoch_id=? AND generation=? AND incarnation=? ORDER BY seq DESC LIMIT 64',
+                            tuple(seat[k] for k in ('actor_id', 'epoch_id', 'generation', 'incarnation'))).fetchall()
+        life = next((r for r in rows if r['kind'] == 'lifecycle'), None)
+        last = rows[0] if rows else None
+        last_at = last['corrected_at'] if last and _finite(last['corrected_at']) and 0 <= last['corrected_at'] <= now else None
+        rows = [r for r in rows if _finite(r['corrected_at']) and 0 <= r['corrected_at'] <= now]
+        thoughts = [r for r in rows if r['kind'] == 'thought' and _text(r['text'])]
+        host = _host_state(office_db, seat)
+        activity = dict(kind='unknown', until=None, reason=None, at=None)
+        if life and life['state'] == 'known' and _finite(life['corrected_at']) and 0 <= life['corrected_at'] <= now:
+            at = life['corrected_at'];activity['at'] = at
+            refs = _refs(life['refs_json'])
+            reason = refs.get('reason') if isinstance(refs.get('reason'), str) else host.get('parked_reason')
+            if life['text'] == 'parked' and isinstance(reason, str):
+                activity.update(kind='parked', reason=reason[:256])
+            elif life['text'] == 'wake_start' and now - at <= 660:
+                activity['kind'] = 'working'
+            elif life['text'] in ('wake_end', 'sleep', 'unparked'):
+                until = refs.get('sleep_until') if life['text'] == 'unparked' and _finite(refs.get('sleep_until')) else host.get('sleep_until')
+                if _finite(until) and now < until <= 253402300799:
+                    activity.update(kind='sleeping', until=until)
+                elif life['text'] == 'unparked':
+                    activity['kind'] = 'idle'
+        tool = next((r['text'] for r in rows if r['kind'] == 'tool_call' and isinstance(r['text'], str) and _finite(activity['at']) and r['corrected_at'] >= activity['at']), None)
+        tool_event = next((r for r in rows if r['kind'] in ('tool_call', 'tool_result')), None)
+        last_tool = (_refs(tool_event['refs_json']).get('tool') if tool_event else None) or (tool_event['text'] if tool_event and tool_event['kind'] == 'tool_call' else None)
+        out.append(dict(actor_id=seat['actor_id'], role=seat['role'], name=seat['role'].replace('_', ' ').title(), activity=activity,
+                        current_tool=tool[:128] if tool and activity['kind'] == 'working' else None, last_thought=thoughts[0]['text'] if thoughts else None,
+                        last_event_id=last['event_id'] if last else None, last_event_at=last_at, last_event_kind=last['kind'] if last else None,
+                        last_event_age_s=now - last_at if last_at is not None else None, last_tool=last_tool[:128] if isinstance(last_tool, str) else None,
+                        tool_event_at=tool_event['corrected_at'] if tool_event else None, tool_event_state=('called' if tool_event['kind'] == 'tool_call' else 'returned') if tool_event else None,
+                        messages=[dict(event_id=r['event_id'], actor_id=seat['actor_id'], kind='thought', text=r['text'], corrected_at=r['corrected_at'], truncated=r['truncated']) for r in thoughts[:16]],
+                        **_floor_metrics(quota, seat, now)))
+    return dict(state='known', items=out, coverage='Current identity; last 64 events per seat. State is last host observation, not a process probe. Wakes are completed today UTC; counted tokens exclude cache reads.')
+
+
+def _floor_questions(conn, roster, now):
+    items = [];limited = False;omitted = 0
+    for seat in roster:
+        values = conn.execute("SELECT event_id,actor_id,state,text,corrected_at FROM office_v2_events WHERE actor_id=? AND epoch_id=? AND generation=? AND incarnation=? AND kind='request' ORDER BY seq DESC LIMIT 11",
+                              tuple(seat[k] for k in ('actor_id', 'epoch_id', 'generation', 'incarnation'))).fetchall()
+        limited = limited or len(values) > 10
+        for row in values[:10]:
+            if not _finite(row['corrected_at']) or not 0 <= row['corrected_at'] <= now or not _text(row['text']) or not row['text'].strip():
+                omitted += 1;continue
+            items.append(dict(row))
+    return dict(state='partial' if limited or omitted else 'known', items=sorted(items, key=lambda r: r['corrected_at'], reverse=True), limited=limited, omitted=omitted,
+                coverage='Latest 10 requests per current seat; replies do not automatically resolve a request.')
+
+
+def _floor_models(quota, result, now):
+    """Requested model of the one recorded wake that covers an item, never the current configuration. Unknown when none or several match."""
+    windows = []
+    current = {r['actor_id']: r for r in result['roster']['items']}
+    if quota is not None:
+        for actor, seat in current.items():
+            for (raw,) in quota.execute('SELECT payload_json FROM quota_wakes WHERE actor_id=? AND ended_at<=? ORDER BY ended_at DESC LIMIT 64', (actor, now)):
+                d = _refs(raw if _text(raw, 16384) else None)
+                if (d.get('actor_id') == actor and d.get('epoch_id') == seat['epoch_id'] and d.get('generation') == seat['generation'] and str(d.get('incarnation')) == str(seat['incarnation'])
+                        and _text(d.get('model'), 128) and _finite(d.get('started_at')) and _finite(d.get('ended_at')) and 0 <= d['started_at'] <= d['ended_at'] <= now):
+                    windows.append(d)
+    for part in ('events', 'mail', 'questions', 'seat_messages'):
+        values = [m for s in result['seats']['items'] for m in s.get('messages', [])] if part == 'seat_messages' else result[part]['items']
+        for item in values:
+            actor, at = (item.get('from_actor_id'), item.get('created_at')) if part == 'mail' else (item.get('actor_id'), item.get('corrected_at'))
+            matches = {d['model'] for d in windows if d['actor_id'] == actor and _finite(at) and d['started_at'] <= at <= d['ended_at']}
+            item['model'] = next(iter(matches)) if len(matches) == 1 else None
+            item['model_basis'] = 'recorded_wake_requested' if item['model'] else 'unknown'
+
+
+def _floor_event(r, seat, now):
+    """One event row as the floor may show it, or None when it fails the identity or shape checks. Refs are cut down per kind."""
+    if (seat is None or any(r[k] != seat[k] for k in ('epoch_id', 'generation', 'incarnation')) or r['kind'] not in E.KINDS or r['state'] not in E.STATES
+            or r['corrected_at'] is not None and (not _finite(r['corrected_at']) or not 0 <= r['corrected_at'] <= now)
+            or not _text(r['event_id'], 256) or r['text'] is not None and not _text(r['text'], empty=True)):
+        return None
+    raw = r['refs_json']
+    if raw is not None and not _text(raw, empty=True):
+        return None
+    try:
+        refs = json.loads(raw or '{}')
+    except (ValueError, TypeError, RecursionError):
+        return None
+    if not isinstance(refs, dict):
+        return None
+    kind = r['kind']
+    if kind == 'browser_visit':
+        refs = {k: refs.get(k) for k in ('host', 'path')}
+    elif kind == 'workspace':
+        files = refs.get('files', [])
+        if not isinstance(files, list):
+            return None
+        refs = dict({k: refs.get(k) for k in ('notebook_text', 'state', 'truncated', 'tasks')}, files=[dict(path=f.get('path'), size_bytes=f.get('size_bytes')) for f in files[:64] if isinstance(f, dict)])
+    elif kind == 'lifecycle':
+        refs = {k: refs.get(k) for k in ('reason', 'until_s', 'type', 'outcome') if isinstance(refs.get(k), (str, int, float))}
+    elif kind == 'tool_result':
+        refs = dict(tool=refs.get('tool') if _text(refs.get('tool'), 256) else None, is_error=refs.get('is_error') if type(refs.get('is_error')) is bool else None)
+    else:
+        refs = {}
+    r = {k: r[k] for k in r.keys() if k != 'refs_json'}
+    r.update(refs=refs, seq=str(r['seq']))
+    if r['corrected_at'] is None or r['kind'] == 'thought' and r['text'] is None:
+        r['state'] = 'unknown'
+    return r
+
+
+def floor_feed(office_db, quota_db, *, now, after=None, mail_after=None, actor=None, limit=64):
+    """What the pixel office draws: roster, newest events, mail, tasks, per-seat activity, open requests. Same shape as the original floor feed.
+    Raises ValueError for a bad cursor, limit or actor. Sealed seats are withheld, not unknown."""
+    after, mail_after = _cursor(after), _cursor(mail_after)
+    if type(limit) is not int or not 1 <= limit <= 200:
+        raise ValueError('limit_invalid')
+    if actor is not None and not _text(actor, 256):
+        raise ValueError('actor_invalid')
+    result = dict(state='unknown', as_of=now if _finite(now) else None, **{k: _floor_part('source_unavailable') for k in FLOOR_PARTS})
+    if not _finite(now):
+        return result
+    try:
+        with _ro(office_db) as conn, _quota(quota_db) as quota:
+            conn.row_factory = sqlite3.Row
+            roster = _floor_part()
+            raw = conn.execute('SELECT * FROM office_v2_roster ORDER BY actor_id LIMIT 65').fetchall()
+            roster['limited'] = len(raw) > 64
+            for row in raw[:64]:
+                r = dict(row)
+                if r['sealed'] == 1:
+                    continue
+                if (r['sealed'] != 0 or not _finite(r['updated_at']) or not 0 <= r['updated_at'] <= now or not all(_text(r[k], 256) for k in ('actor_id', 'epoch_id', 'role'))
+                        or any(type(r[k]) is not int or r[k] < 0 for k in ('generation', 'incarnation'))):
+                    roster['omitted'] += 1;continue
+                roster['items'].append(r)
+            if roster['limited'] or roster['omitted']:
+                roster['state'] = 'partial'
+            result['roster'] = roster
+            current = {r['actor_id']: r for r in roster['items']}
+
+            def tail(table, cursor, *, by_actor=False):
+                part = _floor_part();where = [];args = []
+                if cursor is not None:
+                    where.append('seq>?');args.append(cursor)
+                if by_actor and actor is not None:
+                    where.append('actor_id=?');args.append(actor)
+                rows = conn.execute('SELECT * FROM ' + table + (' WHERE ' + ' AND '.join(where) if where else '') + ' ORDER BY seq ' + ('ASC' if cursor is not None else 'DESC') + ' LIMIT ?', (*args, limit + 1)).fetchall()
+                part['limited'] = len(rows) > limit
+                rows = rows[:limit]
+                part['cursor'] = str(max(r['seq'] for r in rows)) if rows else str(cursor) if cursor is not None else None
+                return rows, part
+
+            rows, part = tail('office_v2_events', after, by_actor=True)
+            heads = {}
+            for row in rows:
+                if row['kind'] == 'workspace' and row['actor_id'] in current and all(row[k] == current[row['actor_id']][k] for k in ('epoch_id', 'generation', 'incarnation')):
+                    heads[row['actor_id']] = max(heads.get(row['actor_id'], 0), row['seq'])
+                event = _floor_event(row, current.get(row['actor_id']), now)
+                if event is None:
+                    part['omitted'] += 1
+                else:
+                    part['items'].append(event)
+            kept = [e for e in part['items'] if e['kind'] != 'workspace' or int(e['seq']) == heads.get(e['actor_id'])]
+            part['omitted'] += len(part['items']) - len(kept);part['items'] = kept
+            if part['limited'] or part['omitted']:
+                part['state'] = 'partial'
+            result['events'] = part
+
+            rows, part = tail('office_dm_events', mail_after)
+            for row in rows:
+                r = dict(row);sender = current.get(r['from_actor_id']);target = sender if r['to_actor_id'] == 'operator' else current.get(r['to_actor_id'])   # a reply to the operator binds to the replying seat
+                host_sender = E.is_host_sender(r['from_actor_id'])
+                if (target is None or r['to_generation'] != target['generation'] or not host_sender and (sender is None or r['from_generation'] != sender['generation'])
+                        or not _finite(r['created_at']) or not 0 <= r['created_at'] <= now or not _text(r['text']) or not _text(r['message_id'], 256)):
+                    part['omitted'] += 1;continue
+                bind = conn.execute('SELECT epoch_id,from_incarnation,to_incarnation FROM office_v2_mail_bind WHERE message_id=?', (r['message_id'],)).fetchone()
+                if not (bind and bind['epoch_id'] == target['epoch_id'] and bind['to_incarnation'] == target['incarnation']
+                        and (host_sender or sender['epoch_id'] == target['epoch_id'] and bind['from_incarnation'] == sender['incarnation'])):
+                    part['omitted'] += 1;continue
+                if actor is not None and actor not in (r['from_actor_id'], r['to_actor_id']):
+                    continue
+                try:
+                    listed = json.loads(r.pop('refs_json', None) or 'null')
+                except (ValueError, TypeError, RecursionError):
+                    listed = None
+                r['notify_operator'] = 'notify_operator' in listed if isinstance(listed, list) and len(listed) <= 64 else None
+                r['seq'] = str(r['seq']);part['items'].append(r)
+            if part['limited'] or part['omitted']:
+                part['state'] = 'partial'
+            part['coverage'] = 'last bounded mail events, all seats; epoch/generation/incarnation-bound'
+            result['mail'] = part
+
+            tasks = _floor_part();seen = set()
+            for event in sorted(result['events']['items'], key=lambda e: int(e['seq']), reverse=True):
+                if event['kind'] != 'workspace' or event['actor_id'] in seen:
+                    continue
+                seen.add(event['actor_id']);manifest = event['refs'];values = manifest.get('tasks')
+                if event['state'] == 'unknown' or not isinstance(values, list) or manifest.get('state') not in ('known', 'partial'):
+                    tasks['state'] = 'unknown';continue
+                if event['state'] == 'partial' or manifest.get('truncated') or manifest.get('state') == 'partial' or len(values) > 64:
+                    tasks['limited'] = True
+                for t in values[:64]:
+                    if (not isinstance(t, dict) or t.get('status') not in ('open', 'blocked', 'done') or not _text(t.get('task_id'), 256) or not _text(t.get('title'), 256)
+                            or t.get('note') is not None and not _text(t['note'], 2048, empty=True)):
+                        tasks['omitted'] += 1;continue
+                    tasks['items'].append(dict(actor_id=event['actor_id'], **{k: t.get(k) for k in ('task_id', 'status', 'title', 'note')}))
+            if ({actor} if actor in current else set(current) if actor is None else set()) - seen:
+                tasks['state'] = 'unknown'
+            if tasks['limited'] or tasks['omitted']:
+                tasks['state'] = 'partial'
+            result['tasks'] = tasks
+            if roster['state'] == 'known':
+                result['questions'] = _floor_questions(conn, roster['items'], now)
+                result['seats'] = _floor_seats(conn, quota, office_db, roster['items'], now)
+                _floor_models(quota, result, now)
+    except sqlite3.Error:
+        pass
+    states = [result[k]['state'] for k in ('roster', 'events', 'mail', 'tasks')]
+    result['state'] = 'known' if all(s == 'known' for s in states) else 'unknown' if all(s == 'unknown' for s in states) else 'partial'
+    return result
+
+
+def floor_dm(office_db, *, to_actor_id, client_id, text, now):
+    """The floor's DM box: one seat, or 'all' (one idempotent message per seat so a retry completes the rest). -> (status, body)."""
+    if not all(_text(v, 256) and v.strip() for v in (to_actor_id, client_id)) or not _text(text, 4096) or not text.strip():
+        return 400, dict(error='dm_body_invalid')
+    if to_actor_id == 'all':
+        with _ro(office_db) as conn:
+            targets = [s['actor_id'] for s in _roster(conn)[0]]
+        if not targets:
+            return 400, dict(error='unknown_actor')
+        sent = {a: send_operator_mail(office_db, to_actor_id=a, client_id=client_id + '_' + a, text=text, now=now) for a in targets}
+        bad = next((o for o in sent.values() if o.get('state') == 'refused'), None)
+        return (409 if bad['reason'] == 'client_id_conflict' else 400, dict(error=bad['reason'])) if bad else (200, dict(state='sent', seats=sent))
+    out = send_operator_mail(office_db, to_actor_id=to_actor_id, client_id=client_id, text=text, now=now)
+    if out.get('state') == 'refused':
+        return (409 if out['reason'] == 'client_id_conflict' else 400), dict(error=out['reason'])
+    return 200, out
 
 
 # ---- project panels

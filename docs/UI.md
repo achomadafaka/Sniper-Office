@@ -139,3 +139,11 @@ script-bearing seat text.
 | 6 | Project data | Declarative panels in three shapes. No project scripts in this UI. |
 | 7 | The existing page in the source project | Leave it until stage 6. Then its seat views are replaced by this UI and its own-data views stay in that project. |
 | 8 | Look and feel | Needs your steer before 5b: plain and dense like a terminal dashboard, or closer to the existing page's styled rooms. The recommendation is plain and dense, dark and light, 14 px minimum text. |
+
+## 10. A project's animated floor
+
+`--floor-dir DIR` shows a project's own floor at `/` and moves the operator page to `/operator`. `DIR` holds `floor.html` and its scripts, styles and fonts (`.html .js .css .ttf .woff2`). The files are listed once at start and served by exact URL, so a path cannot be built from a request; symlinks and other file types are not served.
+
+The floor reads `GET /api/office/feed` (roster, newest events, mail, tasks, per-seat activity, open requests, in the shape the original floor used) and `GET /api/office/explore` (answers `unknown`: this store has no book). Its message box posts to `POST /api/office/dm`, which has the same token, origin and size checks as the other writes; with no `--token-file` it answers 403 and the floor shows that.
+
+CSP: the floor page alone allows inline styles (`style-src 'self' 'unsafe-inline'`) because a floor script may add `<style>` elements. Scripts stay `'self'` only, with no inline script, on every page. The floor files themselves live in the project, not here.
