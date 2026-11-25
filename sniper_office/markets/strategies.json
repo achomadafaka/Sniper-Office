@@ -1,0 +1,162 @@
+{
+ "pm-count-window": {
+  "name": "Decided count window",
+  "book": "polymarket",
+  "thesis": "A market on how many posts an account makes in a fixed window is decided by a public counter. Late in the window the count has already passed some brackets or cannot reach others at any plausible pace, yet those brackets still trade above zero because holders are slow to sell and takers do not read the counter.",
+  "markets": "Post-count brackets and thresholds (Musk, White House and other tracked accounts) closing inside 48 hours.",
+  "entry": "Read the counter and its time from the tracker the rules name. Buy NO on a bracket the count has already left, or that needs more than twice the trailing 24-hour pace to reach. Edge must clear 2x fees plus spread.",
+  "exit": "Hold to resolution. Close early only if the tracker restates the count.",
+  "evidence": "Number in hand: the count, its source and read clock on the card.",
+  "fails_when": "The tracker is stale or wrong, the window or account in the rules differs from the one read, or a burst of posts arrives."
+ },
+ "pm-price-window": {
+  "name": "Decided price window",
+  "book": "polymarket",
+  "thesis": "A 'dip to' or 'reach' market on a traded asset is decided by the exchange high or low inside the window. Near the close the distance left, in units of the asset's realised volatility, makes a touch very unlikely, but the leg still carries a few cents.",
+  "markets": "Touch and range legs on BTC and other symbols with a one-minute exchange series, closing inside 48 hours.",
+  "entry": "Prove from one-minute bars that the level has not traded in the window. Buy NO when the move still required is several times what realised volatility delivers in the time left and the edge clears 2x cost.",
+  "exit": "Hold to resolution. The leg resolves against the call the moment the level trades.",
+  "evidence": "Number in hand: window high and low from the rule's source, live price, time left, realised volatility.",
+  "fails_when": "A volatility shock, a wick on the resolving venue that the read venue did not print, or a window misread."
+ },
+ "pm-live-state": {
+  "name": "Decided live state",
+  "book": "polymarket",
+  "thesis": "Some markets are settled by a physical or published state that can be read today: ships in a region, a running box-office total, a ranking. When the state already answers the question and reversing it would take longer than the time left, the price is slow to follow.",
+  "markets": "Carrier counts, cargo arrivals, box-office and ranking legs, review scores, with a dated source for the state.",
+  "entry": "Read the state from the source the rules name, with its date. Take the side the state already supports when undoing it needs more than the time left, and the edge clears cost.",
+  "exit": "Hold to resolution; review at once on any dated fact that changes the state.",
+  "evidence": "A dated primary reading of the deciding state on the card.",
+  "fails_when": "The source lags reality, the rules count the state differently than the source does, or the state changes fast."
+ },
+ "pm-long-fade": {
+  "name": "Fade an overpriced long shot",
+  "book": "polymarket",
+  "thesis": "Low-probability outcomes are bought by people who like the story, so they trade above their chance. Selling them (buying NO) and waiting should earn the difference.",
+  "markets": "Long-dated politics, corporate and geopolitical markets where YES trades roughly 5 to 50 cents on a story.",
+  "entry": "Research estimate of YES well under the price; buy NO when the gap clears 3x cost. A judgement call: no deciding number exists.",
+  "exit": "Hold weeks to months; close on a dated fact against the thesis or a 15-point adverse move.",
+  "evidence": "Research and base rates; no number in hand.",
+  "fails_when": "Capital sits for months for a few points, costs and time eat the edge, or the story turns out true."
+ },
+ "pm-relative-value": {
+  "name": "Sibling markets that disagree",
+  "book": "polymarket",
+  "thesis": "Two markets on linked outcomes must obey arithmetic (a later date cannot be less likely than an earlier one; brackets sum to one). When their prices imply something impossible or far-fetched, one of them is wrong.",
+  "markets": "Date ladders, threshold ladders, bracket sets and pairs such as 'X out by' against 'new government by'.",
+  "entry": "Show the inconsistency from both books at the same clock; take the side that restores it when executable prices leave an edge after cost.",
+  "exit": "Close when the gap closes or at resolution of the nearer leg.",
+  "evidence": "Both books read together; the rule texts confirm the legs really are linked.",
+  "fails_when": "The legs resolve on different rules, or the gap is only in mid prices and vanishes at the bid and ask."
+ },
+ "pm-catalyst": {
+  "name": "Dated catalyst",
+  "book": "polymarket",
+  "thesis": "A scheduled event (a meeting, a hearing, a match, a filing) will move a market on a known date. If the desk reads the likely outcome better than the price does, it can position before the date.",
+  "markets": "Markets resolving on, or strongly moved by, an event with a published date inside the horizon.",
+  "entry": "Name the event, its date and source. Take the side the evidence favours when the edge clears 3x cost.",
+  "exit": "Exit after the event prints, or at the horizon.",
+  "evidence": "The dated schedule and the facts bearing on the outcome; usually a judgement call.",
+  "fails_when": "The outcome is close to a coin flip, the date slips, or the market already holds the same reading."
+ },
+ "pm-filing-arithmetic": {
+  "name": "Arithmetic on a filing",
+  "book": "polymarket",
+  "thesis": "A market on a company number (shares sold, market cap bracket) can be worked out from the filing's own figures before the crowd does the sum.",
+  "markets": "IPO share-percentage and market-cap brackets, valuation thresholds.",
+  "entry": "Take the figures from the primary filing and compute the bracket; call it only with the filing itself on the card.",
+  "exit": "Close at once when any figure in the sum is restated (an upsizing, an option exercise).",
+  "evidence": "The primary filing. Secondary reports of the figures do not qualify.",
+  "fails_when": "The inputs change after entry or were read second-hand. The desk's largest loss came from this."
+ },
+ "pm-long-shot-yes": {
+  "name": "Cheap YES on an underpriced tail",
+  "book": "polymarket",
+  "thesis": "Sometimes a tail is priced too low: the market anchors on a stale level while the underlying has moved close to the strike.",
+  "markets": "Touch or threshold legs trading under about 40 cents where the underlying sits near the level.",
+  "entry": "Buy YES when distance and volatility imply a chance well above the price and the edge clears 3x cost.",
+  "exit": "Sell on the touch or a large mark-up; otherwise it expires worthless.",
+  "evidence": "Live underlying price against the strike, volatility, time left.",
+  "fails_when": "Most of the time: tails expire worthless and the few wins must pay for all of them."
+ },
+ "pm-news-scalp": {
+  "name": "News reaction, 15 minutes",
+  "book": "polymarket",
+  "thesis": "A headline that changes a market's odds takes minutes to be fully priced. Acting inside that gap captures part of the move.",
+  "markets": "Liquid markets with a tight book, on a headline that is new to the market.",
+  "entry": "Headline received within minutes, not already in the price; expected move at least 2 to 3x cost.",
+  "exit": "Scored 15 minutes after entry at the bid; no stop, no extension: the test is the first reaction only.",
+  "evidence": "The headline's publication clock against the book's movement.",
+  "fails_when": "The desk answers in tens of seconds while faster traders have already moved the price."
+ },
+ "perps-level-break": {
+  "name": "Break of a marked level",
+  "book": "perps",
+  "thesis": "A clean break of a level many traders watch (day high or low, prior-day level, range edge) tends to run as stops trigger.",
+  "markets": "Liquid USDT perpetuals with a clear level and a higher-timeframe trend in the same direction.",
+  "entry": "Conditional order just beyond the level, with the 1h and 4h trend, flow not against it, target inside what the symbol does in four hours.",
+  "exit": "Stop behind the level; target at the reach-table move; time stop at four hours; trail after 60% of target.",
+  "evidence": "Chart block: trend on 1h and 4h, the level, flow, reach table.",
+  "fails_when": "False breaks in a quiet tape, breaks against the higher timeframe, targets several times the hourly move."
+ },
+ "perps-headline-momentum": {
+  "name": "Trade with a fresh headline",
+  "book": "perps",
+  "thesis": "A macro or company headline pushes an instrument for an hour or more; joining early rides the repricing.",
+  "markets": "Perpetuals on majors, metals, oil and single-stock contracts with a headline under an hour old.",
+  "entry": "Market or near-market entry in the headline's direction when the chart agrees.",
+  "exit": "Stop about one hourly sigma away; target by the reach table; four-hour time stop.",
+  "evidence": "The dated headline with its age in minutes, and the chart block showing price has not already made the move.",
+  "fails_when": "The move is already made when the seat reads it; the headline is noise."
+ },
+ "perps-fade-extension": {
+  "name": "Fade a stretched move",
+  "book": "perps",
+  "thesis": "After a fast extension with crowded positioning (funding, a failed high), price tends to give some back.",
+  "markets": "Perpetuals after a multi-percent move in hours with stretched funding or a rejected high or low.",
+  "entry": "Against the move after a failed retest, never into a still-running trend on the 4h.",
+  "exit": "Stop beyond the extreme; target the prior range or VWAP; four-hour time stop.",
+  "evidence": "Funding, the rejected level, open interest and taker flow.",
+  "fails_when": "Trends extend further than positioning suggests; the stop sits inside normal noise."
+ },
+ "stock-intraday-catalyst": {
+  "name": "Intraday stock move on news",
+  "book": "stocks",
+  "thesis": "A stock with fresh company or sector news and unusual volume keeps moving in the same direction during the session.",
+  "markets": "US large caps and liquid ETFs in the cash session with a dated catalyst.",
+  "entry": "In the news direction at a level (VWAP reclaim, opening-range break), catalyst under 60 minutes old.",
+  "exit": "Stop behind the level; target within the unused part of the day's range; flat before the close.",
+  "evidence": "The catalyst and its age, relative volume, the stock chart block.",
+  "fails_when": "Entered late on a stale screener snapshot; the first move was the whole move."
+ },
+ "stock-level-break": {
+  "name": "Stock breaks a marked level",
+  "book": "stocks",
+  "thesis": "A break of the opening range or a prior-day level on volume continues intraday.",
+  "markets": "US large caps and index ETFs with a clear level and relative volume above normal.",
+  "entry": "Conditional entry beyond the level with the market (SPY, QQQ) not against it.",
+  "exit": "Stop back inside the range; target by the reach table; flat before the close.",
+  "evidence": "Opening range, prior-day levels, relative volume.",
+  "fails_when": "Breaks in a range-bound session reverse; index and stock disagree."
+ },
+ "pm-nothing-ever-happens": {
+  "name": "Nothing ever happens",
+  "book": "polymarket",
+  "thesis": "Dramatic outcomes are overpriced by people who like the story.",
+  "markets": "Rule arm: dramatic binary titles with at least $25,000 volume in 24 hours and expiry within 45 days. Pick arm: up to ten open titles ranked by Explorer each UTC day.",
+  "entry": "Rule arm: YES ask of 3\u201320 cents. Both arms: buy NO at its observed ask once per market per arm.",
+  "exit": "Hold to resolution. Report by arm after 30 resolutions.",
+  "evidence": "Exact condition and outcome token IDs, CLOB ask, entry fee, measured expiry, and final resolution.",
+  "fails_when": "The tail happens, or fees and time eat a few cents of edge."
+ },
+ "sports-closing-line": {
+  "name": "Cheaper than the bookmaker's fair line",
+  "book": "sports",
+  "thesis": "A sharp bookmaker's line with its margin removed is the best public estimate of a game. When the same outcome trades cheaper on the prediction market by more than costs, the gap is the edge; beating the closing line is the proof.",
+  "markets": "NBA full-game moneylines with an exact event match.",
+  "entry": "By rule, no model: ask below fair by more than two fees plus spread plus one point.",
+  "exit": "Held to the game; scored on closing-line value first, result second.",
+  "evidence": "Same-book de-vigged line and the market's book at one clock.",
+  "fails_when": "The bookmaker line is retail and soft, or the gap is stale quotes."
+ }
+}

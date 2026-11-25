@@ -1,0 +1,4 @@
+{
+  "markets_db": "/srv/office/run/data/markets.db",
+  "interval_s": 60, "symbols": ["SPY","QQQ","NVDA","TSLA","AAPL","AMD","META","MSFT","AMZN","COIN","MSTR","PLTR"], "screen": true, "screen_extra": 10, "retention_days": 7
+}

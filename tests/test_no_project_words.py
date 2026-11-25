@@ -12,6 +12,7 @@ CASED = [r'\b(?:Al' 'pha|Be' 'ta|Gam' 'ma|Del' 'ta|Eps' 'ilon|Ze' 'ta|Lam' 'bda)
 # The desk plug-in is the project that plugs in, shipped beside the runtime: its tool names and data are the domain. Only these paths are exempt; the runtime proper stays guarded.
 PLUGIN_PATHS = ('sniper_office/desk/', 'tests/desk/', 'docs/DESK.md', 'deploy/office-paper-filler.service', 'config/paper_filler.example.json', 'deploy/office-desk-feed.service', 'config/desk_feed.example.json', 'config/office_data_sources.example.json', 'deploy/office-j7-listener.service', 'deploy/office-j7-ticks.service', 'config/j7_listener.example.json', 'config/j7_ticks.example.json',
                 'config/j7_traders.example.json', 'config/book_policy_copy.example.json', 'config/paper_filler_copy.example.json', 'config/seat_copy_desk.example.json', '.brain/')
+PLUGIN_PATHS += ('sniper_office/markets/', 'tests/markets/', 'docs/MARKETS.md', 'deploy/office-markets-', 'config/markets_')    # the markets plug-in, as above
 PATTERN = re.compile('(?i:' + '|'.join(WORDS) + ')|' + '|'.join(CASED))
 
 

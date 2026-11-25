@@ -1,0 +1,12 @@
+{"sources": {"feed": "/srv/office/run/data/markets.db", "ledger": "/srv/office/run/data/markets_ledger.db"},
+ "tables": {
+  "mk_news": {"source": "feed", "time_column": "fetched_at", "time_kind": "epoch", "columns": ["news_id", "source", "title", "published", "fetched_at", "dup_of"]},
+  "mk_routes": {"source": "feed", "time_column": "routed_at", "time_kind": "epoch", "columns": ["news_id", "room", "score", "reason", "classifier", "meme_name", "meme_ticker", "routed_at"]},
+  "mk_pm_markets": {"source": "feed", "time_column": "fetched_at", "time_kind": "epoch", "columns": ["condition_id", "question", "room", "end_ts", "fee_rate", "volume24h", "closed", "resolved_yes", "fetched_at"]},
+  "mk_perp_ticks": {"source": "feed", "time_column": "fetched_at", "time_kind": "epoch", "columns": ["venue", "coin", "mark", "mid", "funding", "funding_h", "oi", "day_vol", "fetched_at"]},
+  "mk_perp_candles": {"source": "feed", "time_column": "start_ts", "time_kind": "epoch", "columns": ["coin", "interval", "start_ts", "status", "open", "high", "low", "close", "volume"]},
+  "mk_stock_quotes": {"source": "feed", "time_column": "fetched_at", "time_kind": "epoch", "columns": ["symbol", "price", "quote_ts", "prev_close", "volume", "fetched_at"]},
+  "bk_books": {"source": "ledger", "time_column": "created_at", "time_kind": "epoch", "columns": ["book_id", "lane", "role", "start_cash", "cash", "halted", "created_at"]},
+  "bk_positions": {"source": "ledger", "time_column": "entry_at", "time_kind": "epoch", "columns": ["pos_id", "book_id", "lane", "instrument", "side", "qty", "entry_price", "entry_at", "leverage", "margin", "status", "exit_price", "exit_at", "exit_reason", "realized", "strategy_id", "news_id", "thesis"]},
+  "bk_calls": {"source": "ledger", "time_column": "at", "time_kind": "epoch", "columns": ["call_id", "role", "condition_id", "side", "entry_ask", "horizon", "confidence", "mechanism", "at"]}
+ }}

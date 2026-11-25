@@ -1,0 +1,4 @@
+{
+  "markets_db": "/srv/office/run/data/markets.db",
+  "interval_s": 300, "leagues": ["basketball/nba", "football/nfl", "baseball/mlb", "hockey/nhl", "soccer/eng.1"], "retention_days": 10
+}

@@ -1,0 +1,4 @@
+{
+  "markets_db": "/srv/office/run/data/markets.db",
+  "interval_s": 15, "coins": ["BTC"], "delay_s": 15, "give_up_s": 900
+}

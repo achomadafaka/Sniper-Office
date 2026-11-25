@@ -1,0 +1,27 @@
+# One markets host process per instance: polymarket, perps, stocks, news, sports or books (the paper-book engine). Install: copy to ~/.config/systemd/user/, set the Python path and the two paths below, then
+#   systemctl --user enable --now office-markets-feed@polymarket office-markets-feed@perps office-markets-feed@stocks office-markets-feed@news office-markets-feed@books
+# The instance name picks the module (sniper_office.markets.%i) and its config (config/markets_%i.example.json is the template). Read-only public sources, no key; paper only. The hourly candle recorder is its own unit: office-markets-intel-hl.service.
+# Run exactly one of each instance per database: the feeds share markets_db (WAL) and the engine owns the ledger writes with the seats' order tools.
+[Unit]
+Description=Office markets %i
+After=network-online.target
+
+[Service]
+Type=simple
+Environment=PYTHONUNBUFFERED=1
+# Path of the Python that has sniper_office installed, and of the config for this instance.
+ExecStart=/usr/bin/python3 -m sniper_office.markets.%i --config /srv/office/run/config/markets_%i.json
+Restart=on-failure
+RestartSec=30
+Nice=10
+MemoryMax=256M
+CPUQuota=50%
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+# The directory holding markets.db and markets_ledger.db (WAL files are created beside them).
+ReadWritePaths=/srv/office/run/data
+PrivateTmp=yes
+
+[Install]
+WantedBy=default.target

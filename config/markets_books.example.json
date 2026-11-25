@@ -1,0 +1,8 @@
+{
+  "markets_db": "/srv/office/run/data/markets.db",
+  "ledger_db": "/srv/office/run/data/markets_ledger.db",
+  "interval_s": 15,
+  "start_cash": 1000, "quote_max_age_s": 120, "max_open": 5, "max_margin_pct": 25,
+  "perp_max_leverage": 5, "perp_slip_bps": 2, "perp_fee_bps": 4.5, "perp_max_hold_s": 14400,
+  "stock_max_leverage": 5, "stock_cost_bps": 2, "stock_quote_max_age_s": 180, "stock_no_new_s": 1800, "stock_flat_before_s": 300
+}

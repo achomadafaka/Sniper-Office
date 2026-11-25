@@ -18,7 +18,7 @@ models = ["jsonschema", "referencing"]
 packages.find.include = ["sniper_office*"]   # every sub-package, including the plug-in
 
 [tool.setuptools.package-data]
-sniper_office = ["ui_static/*"]
+sniper_office = ["ui_static/*", "markets/*.json", "markets/prompts/*.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

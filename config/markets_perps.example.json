@@ -1,0 +1,5 @@
+{
+  "markets_db": "/srv/office/run/data/markets.db",
+  "ledger_db": "/srv/office/run/data/markets_ledger.db",
+  "interval_s": 30, "venues": ["hyperliquid"], "top_n": 60, "coins": ["BTC", "ETH", "SOL"], "retention_days": 3
+}

@@ -1,0 +1,5 @@
+{
+  "markets_db": "/srv/office/run/data/markets.db",
+  "interval_s": 30, "retention_days": 14, "classifier_hook": null,
+  "_feeds": "Omit \"feeds\" to poll the built-in list (the source project's 38 public RSS feeds). Or give [[name, https url, poll_s], ...]."
+}
