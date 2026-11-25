@@ -224,13 +224,22 @@ def test_network_read_needs_its_db_and_reads_edges_with_proof_state(tmp_path, mo
     assert not error and doc['state'] in ('known', 'partial') and doc['edges'] and doc['edges'][0]['proof_state'] == 'none'   # a seat's edge is never verified
 
 
-def test_brain_runs_the_configured_script_and_records_fact_ids(tmp_path, monkeypatch):
-    script = tmp_path / 'brain.py'
-    script.write_text('import json,sys\nprint(json.dumps(dict(state="known",facts=[dict(id="f1")],op=sys.argv[3],actor=sys.argv[5])))\n')
-    t = seat(tmp_path, monkeypatch, cfg=dict(brain_env='unused.env', brain_script=str(script), brain_python=sys.executable))
-    error, doc = call(t, 'brain_read', query='q')
-    assert not error and doc['op'] == 'read' and doc['actor'] == 'ag_judge' and t.plugin_state['brain_fact_ids'] == ['f1']
-    assert call(t, 'brain_note', text='n')[1]['op'] == 'note'
+def test_brain_uses_the_office_brain_with_the_seat_role(tmp_path, monkeypatch):
+    pkg = tmp_path / 'pkg' / 'brain'
+    pkg.mkdir(parents=True)
+    log = tmp_path / 'calls.txt'
+    (pkg / '__init__.py').write_text('')
+    (pkg / '__main__.py').write_text(
+        'import sys\nopen(%r, "a").write(" ".join(sys.argv[1:]) + "\\n")\n'
+        'op = sys.argv[1]\n'
+        'print({"ask": "[unverified] 45718b61 observation: x", "episode": "episode 5392ba90-ec5e-4b72-9915-5f896cb59616 (1 part(s))", "write": "written 1"}[op])\n' % str(log))
+    t = seat(tmp_path, monkeypatch, cfg=dict(brain_dir=str(tmp_path), brain_package=str(tmp_path / 'pkg'), brain_python=sys.executable, role='judge'))
+    error, _ = call(t, 'brain_read', query='q')
+    assert not error and t.plugin_state['brain_fact_ids'] == ['45718b61']
+    error, _ = call(t, 'brain_note', text='n')
+    assert not error
+    calls = log.read_text().splitlines()
+    assert calls[1].startswith('episode --role judge --kind note') and '--episode 5392ba90-ec5e-4b72-9915-5f896cb59616' in calls[2] and 'actor:judge' in calls[2]
     assert call(t, 'brain_note', text=' ')[1]['reason'] == 'text_invalid'
-    script.write_text('import sys;sys.exit(3)\n')
-    assert call(t, 'brain_read', query='q')[1] == dict(state='unknown', reason='brain_unavailable')
+    assert call(t, 'brain_note', text='--role head')[1]['reason'] == 'text_invalid'
+

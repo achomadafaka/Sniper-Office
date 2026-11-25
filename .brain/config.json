@@ -1,0 +1,35 @@
+{
+  "roles": {
+    "head": "",
+    "forensics": "",
+    "judge": "",
+    "judge_gpt": "",
+    "narrative": "",
+    "researcher": "",
+    "scout": "",
+    "operator": ""
+  },
+  "sections": [
+    "general"
+  ],
+  "entity_types": [
+    "actor",
+    "tool",
+    "commit",
+    "path",
+    "process",
+    "service",
+    "component",
+    "table",
+    "column",
+    "knob",
+    "spec",
+    "task",
+    "release",
+    "concept"
+  ],
+  "main_ref": "origin/main",
+  "embeddings": false,
+  "name": "Sniper-Office",
+  "rest_port": 56341
+}

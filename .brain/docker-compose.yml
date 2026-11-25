@@ -1,0 +1,40 @@
+# Written by `brain init`. The project brain: Postgres + pgvector (db) behind PostgREST (rest).
+# Secrets are in brain.env beside this file (ignored by git). REST listens on 127.0.0.1 only.
+name: brain-sniper-office-a951c3
+
+services:
+  db:
+    image: pgvector/pgvector:pg17
+    restart: unless-stopped
+    env_file: brain.env
+    environment:
+      POSTGRES_DB: postgres
+      POSTGRES_USER: postgres
+    volumes:
+      - pg:/var/lib/postgresql/data
+    shm_size: 128mb
+    healthcheck:
+      # TCP, not the socket: the first-boot init server listens on the socket only.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -d postgres"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+
+  rest:
+    image: postgrest/postgrest:latest
+    restart: unless-stopped
+    env_file: brain.env
+    environment:
+      PGRST_DB_SCHEMAS: public
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_DB_EXTRA_SEARCH_PATH: public,extensions
+      PGRST_DB_MAX_ROWS: "1000"
+      PGRST_DB_POOL: "10"
+    ports:
+      - "127.0.0.1:56341:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pg:

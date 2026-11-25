@@ -22,7 +22,7 @@ A tool whose config key is missing, or whose file cannot be read, answers `{"sta
 | `research_env_file` | chain_*, network_expand (needs `MEMECOIN_RESEARCH_HELIUS_RPC_URL`, https) | the research env file |
 | `chain_db` | chain cache and pace (default: beside `office_db`) | |
 | `wallet_network_db` | network_read, network_expand | `data/office/wallet_network.db` |
-| `brain_env`, `brain_script`, `brain_python` | brain_read, brain_note | env file, `scripts/office_brain.py`, a python that can import the brain |
+| `brain_dir`, `brain_package`, `brain_python` | brain_read, brain_note | folder holding the Office's `.brain/` (this repo), the project-brain checkout, optional python |
 | `feed_window_s`, `feed_stale_s` | feed_list (defaults 3600, 900) | |
 
 ## What each tool is here
@@ -31,7 +31,7 @@ A tool whose config key is missing, or whose file cannot be read, answers `{"sta
 - `feed_list`, `sheet_read`: the stored hard-filter passes and their stored evidence, state `partial`. The near-pass feed and the live sheet builder stay in the source project. A desk db whose newest ticket is older than `feed_stale_s` is `unknown`, not an empty feed.
 - `paper_order`, `paper_exit`: checked (role, plan, rails, halt, one entry per coin, order open in the book), then recorded in `desk_paper_requests` with state `queued`, `filled: false`. `filler.py` fills them (below).
 - `chain_*`, `network_*`: the source project's read-only chain data and wallet network, ported as `chain_data.py` and `wallet_network.py`.
-- `brain_*`: run the configured brain script as a subprocess, one call per process.
+- `brain_*`: the Office's own project brain (`.brain/` in this repo, started with `brain init`). `brain_read` runs `brain ask`. `brain_note` records the text as a `note` episode, then writes an unverified `observation` fact on `actor:<role>` citing it. The seat's `role` is its brain role.
 
 ## The fill engine
 

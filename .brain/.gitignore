@@ -1,0 +1,4 @@
+brain.env
+outbox.jsonl*
+snapshot.json*
+state/
