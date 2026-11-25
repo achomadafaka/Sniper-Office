@@ -56,7 +56,7 @@ def rows(lis, sql='SELECT signal_id,side,chain,ticket_id FROM j7_signals ORDER B
     (trade(tid='g', net=(99999, '')), 'chain_unknown'),
     (trade(tid='h', usd=None), 'below_size'),
     (trade(tid='i', token='x'), 'malformed'),
-    (trade(tid='j', handle='KOY', user='other-id'), 'accepted'),                      # handle match, case-insensitive
+    (trade(tid='j', handle='KOY', user='other-id'), 'not_selected'),                  # a chosen handle never stands in for a listed id
     (thesis(), 'accepted'), (thesis(tid='t2', user='u-x', handle='stranger'), 'not_selected'), (thesis(tid='t3', text=''), 'thesis_empty'),
 ])
 def test_the_filter_keeps_selected_traders_with_enough_size_on_a_known_chain_and_drops_the_rest(tmp_path, event, verdict):

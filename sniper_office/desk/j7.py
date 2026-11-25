@@ -211,7 +211,8 @@ class Roster:
         doc = json.loads(Path(path).read_text()) if path else dict(traders=traders or [])
         self.traders = [t for t in doc.get('traders', []) if isinstance(t, dict)]
         self.by_id = {str(t['id']): t for t in self.traders if t.get('id')}
-        self.by_handle = {str(t['handle']).lower(): t for t in self.traders if t.get('handle')}
+        # A handle is display text anyone can choose: only a trader listed without an id may be matched by it, never one whose id carries a tier or overrides
+        self.by_handle = {str(t['handle']).lower(): t for t in self.traders if t.get('handle') and not t.get('id')}
 
     def find(self, sig):
         return self.by_id.get(sig['trader_id']) or self.by_handle.get((sig['handle'] or '').lower())
