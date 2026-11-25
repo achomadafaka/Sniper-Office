@@ -99,7 +99,8 @@ CREW_ROLES=frozenset()   # human-side or outside-agent roles allowed to mail sea
 
 def configure(*,crew_roles):
     global CREW_ROLES
-    if not all(isinstance(r,str) and r and r==r.lower() for r in crew_roles):raise ValueError('seat_events_config')
+    # 'operator' is never a crew role: crew mail must not read as the operator's.
+    if not all(isinstance(r,str) and r and r==r.lower() and r!='operator' for r in crew_roles):raise ValueError('seat_events_config')
     CREW_ROLES=frozenset(crew_roles)
 
 

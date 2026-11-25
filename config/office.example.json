@@ -22,7 +22,7 @@
   },
   "tickets": {"crew_ids": ["Operator", "Maintainer"], "approver_role": "head"},
   "handoff_kinds": [["memo", "reviewer", "memo_to_reviewer"]],
-  "crew_roles": ["operator", "maintainer"],
+  "crew_roles": ["maintainer", "builder"],
   "host": {"bridge": "/srv/sniper-office", "home": "/var/lib/sniper-office", "user": "office"},
   "tables": {
     "append_only": ["work_log"],
