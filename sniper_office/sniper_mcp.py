@@ -37,7 +37,7 @@ class McpError(Exception):
 SECRET = re.compile(r'(\..*env|\.env.*|.*\.env(\..*)?|.*\.(pem|key|p12|pfx|kdbx|gpg|asc)|.*keypair.*|.*credential.*|.*secret.*|.*token.*|.*password.*|'
                     r'id_(rsa|dsa|ecdsa|ed25519).*|\.netrc|\.pgpass|\.npmrc|\.pypirc|\.mcp\.json|.*wallet.*\.json)$', re.I)
 SKIP_DIRS = {'.git', 'node_modules', '__pycache__'}
-CODE = re.compile(r'.*\.(py|pyc|md|sh|css|js|ts|html|example|lock|txt)$', re.I)   # source and docs named after secrets are code the server imports, not secrets
+CODE = re.compile(r'.*\.(py|pyc)$', re.I)   # Python modules the server may import are not secrets; every other matching file stays masked
 
 
 def secret_files(root):
