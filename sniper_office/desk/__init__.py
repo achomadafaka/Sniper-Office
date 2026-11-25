@@ -129,11 +129,15 @@ def _brain(tools, op, text):
             # An observation must cite an episode: the note's own text is recorded first as its provenance.
             ep = _brain_run(tools, 'episode', '--role', role, '--kind', 'note', '--', text)
             m = re.search(r'episode ([0-9a-f-]{36})', ep.stdout)
+            if ep.returncode == 2:   # the brain answered and refused: say why, it is not an outage
+                return P.refused('brain_refused', detail=(ep.stdout + ep.stderr).strip()[-300:])
             if ep.returncode or not m:
                 return P.unknown('brain_unavailable')
             done = _brain_run(tools, 'write', '--role', role, '--kind', 'observation', '--entity', 'actor:' + role, '--episode', m.group(1), '--', text)
     except (OSError, subprocess.SubprocessError):
         return P.unknown('brain_unavailable')
+    if done.returncode == 2:
+        return P.refused('brain_refused', detail=(done.stdout + done.stderr).strip()[-300:])
     if done.returncode not in (0, 3) or not done.stdout:
         return P.unknown('brain_unavailable')
     if op == 'note' and done.returncode == 3:   # needs judgement: nothing was created, so the note stays as the episode and the seat is told what to do

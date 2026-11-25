@@ -7,7 +7,13 @@
     "narrative": "",
     "researcher": "",
     "scout": "",
-    "operator": ""
+    "operator": "",
+    "perps_trader": "",
+    "stocks_trader": "",
+    "coach": "",
+    "pm_trader": "",
+    "copy_desk": "",
+    "newsdesk": ""
   },
   "sections": [
     "general"
