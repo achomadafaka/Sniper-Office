@@ -1,0 +1,2 @@
+{"rooms": {"newsroom": ["narrative"], "research": ["scout", "researcher", "forensics"], "debate": ["judge", "judge_gpt"], "decision": ["head"], "trading": [], "situation": []},
+ "fallback": "research"}

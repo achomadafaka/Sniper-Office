@@ -140,13 +140,12 @@ script-bearing seat text.
 | 7 | The existing page in the source project | Leave it until stage 6. Then its seat views are replaced by this UI and its own-data views stay in that project. |
 | 8 | Look and feel | Needs your steer before 5b: plain and dense like a terminal dashboard, or closer to the existing page's styled rooms. The recommendation is plain and dense, dark and light, 14 px minimum text. |
 
-## 10. A project's animated floor
+## 10. The seat floor
 
-The source project's floor is kept in this repository under `floor/` (page, style, scripts, fonts). It is that project's own
-content, not part of the package, and the project-word test skips that folder. Start it with `--floor-dir floor`.
+`floor/` holds the source project's newest Office page (rooms with pixel agents at their stations, a header strip, a live feed), ported and filled with this office's own seats. It is that project's page, not part of the package, and the project-word test skips the folder. Start it with `--floor-dir floor`; add `--ledger-db PATH` (repeatable) to fill the ledger room from paper ledgers.
 
-`--floor-dir DIR` shows a project's own floor at `/` and moves the operator page to `/operator`. `DIR` holds `floor.html` and its scripts, styles and fonts (`.html .js .css .ttf .woff2`). The files are listed once at start and served by exact URL, so a path cannot be built from a request; symlinks and other file types are not served.
+`--floor-dir DIR` shows the floor at `/` and moves the operator page to `/operator`. `DIR` holds `floor.html`, its files (`.html .js .css .json .ttf .woff2`) and `rooms.json`, the floor's own seat-to-room table (`{"rooms": {room: [role, ...]}, "fallback": room or null}`, read once at start; the runtime knows no room names). The files are listed once at start and served by exact URL, so a path cannot be built from a request; symlinks and other file types are not served. One strict CSP on every page: scripts, styles and images `'self'` only, no inline script, no inline style.
 
-The floor reads `GET /api/office/feed` (roster, newest events, mail, tasks, per-seat activity, open requests, in the shape the original floor used) and `GET /api/office/explore` (answers `unknown`: this store has no book). Its message box posts to `POST /api/office/dm`, which has the same token, origin and size checks as the other writes; with no `--token-file` it answers 403 and the floor shows that.
+The page makes one read, `GET /api/office/newsroom` (`views.newsroom`): seats by role with their recorded state, the rooms they sit in, a feed of mail, requests, wakes and tool calls, open requests, and the ledger summary. It is read-only; the old feed, explore and DM routes are gone (the operator page still sends mail). Seat state is the host's last observation, not a process probe: awake, sleeping until a time, parked with its reason, or unknown. Requests are the latest ten per seat and a reply does not close one.
 
-CSP: the floor page alone allows inline styles (`style-src 'self' 'unsafe-inline'`) because a floor script may add `<style>` elements. Scripts stay `'self'` only, with no inline script, on every page. The floor files themselves live in the project, not here.
+What this store holds nothing for shows as unknown or empty, never as a number. The project's seat mapping and what its page leaves out are in the plug-in's document (`docs/` folder, the file named after the plug-in).

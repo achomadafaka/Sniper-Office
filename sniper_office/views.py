@@ -319,7 +319,7 @@ def health(office_db, *, now, verify=False):
     return out
 
 
-# ---- the animated floor: the shape the pixel office reads from /api/office/feed
+# ---- the seat floor: what /api/office/newsroom is built from
 
 FLOOR_PARTS = ('roster', 'events', 'mail', 'tasks', 'seats', 'questions')
 
@@ -475,7 +475,7 @@ def _floor_event(r, seat, now):
 
 
 def floor_feed(office_db, quota_db, *, now, after=None, mail_after=None, actor=None, limit=64):
-    """What the pixel office draws: roster, newest events, mail, tasks, per-seat activity, open requests. Same shape as the original floor feed.
+    """Roster, newest events, mail, tasks, per-seat activity, open requests: the validated base of `newsroom`.
     Raises ValueError for a bad cursor, limit or actor. Sealed seats are withheld, not unknown."""
     after, mail_after = _cursor(after), _cursor(mail_after)
     if type(limit) is not int or not 1 <= limit <= 200:
@@ -586,22 +586,92 @@ def floor_feed(office_db, quota_db, *, now, after=None, mail_after=None, actor=N
     return result
 
 
-def floor_dm(office_db, *, to_actor_id, client_id, text, now):
-    """The floor's DM box: one seat, or 'all' (one idempotent message per seat so a retry completes the rest). -> (status, body)."""
-    if not all(_text(v, 256) and v.strip() for v in (to_actor_id, client_id)) or not _text(text, 4096) or not text.strip():
-        return 400, dict(error='dm_body_invalid')
-    if to_actor_id == 'all':
+# ---- the seat floor page
+
+NO_ROOMS = dict(rooms={}, fallback=None)      # the floor project's own seat-to-room table (rooms.json in its folder): {rooms: {room: [role, ...]}, fallback: room for a role not listed}
+
+
+def _title(text, n=140):
+    return ' '.join(text.split())[:n] if isinstance(text, str) else ''
+
+
+def book(ledgers, *, now):
+    """Paper ledgers, read-only: orders open and closed, wins and net of costs for closed orders that have an exit price. Unknown, with a reason, when none is given or one cannot be read."""
+    if not ledgers:
+        return dict(state='unknown', reason='no_ledger_given', books=[], last_closed=[])
+    books, last = [], []
+    try:
+        for path in ledgers:
+            name = Path(path).resolve().parent.name
+            with _ro(path) as conn:
+                net = 'CASE WHEN state=\'closed\' AND exit_usd IS NOT NULL AND spend_usd IS NOT NULL THEN exit_usd-spend_usd-COALESCE(costs_usd,0) END'
+                rows = {r[0]: r[1:] for r in conn.execute('SELECT state,count(*),sum(%s),sum(%s>0) FROM orders GROUP BY state' % (net, net))}
+                books.append(dict(name=name, open=sum(rows.get(k, (0,))[0] for k in ('pending', 'open')), closed=rows.get('closed', (0,))[0], net_usd=rows.get('closed', (0, None))[1],
+                                  wins=rows.get('closed', (0, 0, 0))[2] or 0))
+                last += [dict(book=name, closed_at=r[0], exit_reason=r[1], net_usd=r[2]) for r in conn.execute(
+                    'SELECT closed_at,exit_reason,%s FROM orders WHERE state=\'closed\' AND closed_at<=? ORDER BY closed_at DESC LIMIT 2' % net, (now,))]
+    except sqlite3.Error:
+        return dict(state='unknown', reason='ledger_unreadable', books=[], last_closed=[])
+    return dict(state='known', reason=None, books=books, last_closed=sorted(last, key=lambda o: o['closed_at'] or 0, reverse=True)[:2])
+
+
+def _tool_calls(office_db, now):
+    try:
         with _ro(office_db) as conn:
-            targets = [s['actor_id'] for s in _roster(conn)[0]]
-        if not targets:
-            return 400, dict(error='unknown_actor')
-        sent = {a: send_operator_mail(office_db, to_actor_id=a, client_id=client_id + '_' + a, text=text, now=now) for a in targets}
-        bad = next((o for o in sent.values() if o.get('state') == 'refused'), None)
-        return (409 if bad['reason'] == 'client_id_conflict' else 400, dict(error=bad['reason'])) if bad else (200, dict(state='sent', seats=sent))
-    out = send_operator_mail(office_db, to_actor_id=to_actor_id, client_id=client_id, text=text, now=now)
-    if out.get('state') == 'refused':
-        return (409 if out['reason'] == 'client_id_conflict' else 400), dict(error=out['reason'])
-    return 200, out
+            return conn.execute("SELECT count(*) FROM office_v2_events WHERE kind='tool_call' AND corrected_at BETWEEN ? AND ?", (now - 3600, now)).fetchone()[0]
+    except sqlite3.Error:
+        return None
+
+
+def newsroom(office_db, quota_db, *, now, ledgers=(), layout=NO_ROOMS):
+    """What the floor page draws: seats by role with their real state, the rooms they sit in, a live feed of mail, requests, wakes and tool calls, and the paper book.
+    Everything this store does not hold is absent, not zero: the page says unknown."""
+    feed = floor_feed(office_db, quota_db, now=now, limit=200)
+    out = dict(state=feed['state'], as_of=feed['as_of'], office=dict(state='unknown', epoch=None, heartbeat_at=None), rooms={r: [] for r in layout['rooms']}, seats=None, activity=None, mail=None,
+               requests=None, stats=None, book=book(ledgers, now=now) if _finite(now) else dict(state='unknown', reason='clock_unknown', books=[], last_closed=[]))
+    if feed['seats']['state'] != 'known':
+        return out
+    roles = {r['actor_id']: r['role'] for r in feed['roster']['items']}
+    place = lambda role: next((room for room, members in layout['rooms'].items() if role in members), layout['fallback'])
+    unread = {r['actor_id']: r['unread_mail'] for r in overview(office_db, quota_db, now=now)['seats']}
+    seats = {}
+    for s in feed['seats']['items']:
+        a, kind = s['activity'], s['activity']['kind']
+        doing = {'working': ('tool ' + s['current_tool']) if s['current_tool'] else 'awake', 'sleeping': 'sleeping until ' + time.strftime('%H:%M UTC', time.gmtime(a['until'])) if a['until'] else 'sleeping',
+                 'parked': 'parked: ' + (a['reason'] or 'reason unknown'), 'idle': 'between wakes'}.get(kind)
+        thought = s['messages'][0] if s['messages'] else None
+        seats[s['role']] = dict(status=kind if kind in ('working', 'sleeping', 'parked') else None, last_action=doing, last_at=s['last_event_at'], last_tool=s['last_tool'], wakes_today=s['wakes_today'],
+                                tokens_today=s['tokens_today'], unread_mail=unread.get(s['actor_id']), last_thought=_title(thought['text'], 400) if thought else None,
+                                last_thought_at=thought['corrected_at'] if thought else None)
+        if place(s['role']) is not None:
+            out['rooms'].setdefault(place(s['role']), []).append(s['role'])
+    named = lambda actor: roles.get(actor, actor)
+    room_of = lambda *actors: next((place(named(x)) for x in actors if x in roles), None)
+    activity = []
+    for e in feed['events']['items']:
+        if e['actor_id'] not in roles or e['corrected_at'] is None:
+            continue
+        refs = e['refs']
+        if e['kind'] == 'tool_call':
+            kind, title = 'tool', _title(e['text'])
+        elif e['kind'] == 'request':
+            kind, title = 'request', _title(e['text'])
+        elif e['kind'] == 'lifecycle' and e['text'] in ('wake_start', 'wake_end', 'sleep', 'parked', 'unparked'):
+            kind, title = 'wake', {'wake_start': 'woke' + (' (%s)' % refs['type'] if refs.get('type') else ''), 'wake_end': 'wake ended' + (' (%s)' % refs['outcome'] if refs.get('outcome') else ''),
+                                   'sleep': 'went to sleep', 'parked': 'parked: ' + str(refs.get('reason') or 'reason unknown'), 'unparked': 'unparked'}[e['text']]
+        else:
+            continue
+        activity.append(dict(kind=kind, room=room_of(e['actor_id']), item_id=e['event_id'], at=e['corrected_at'], title=title, seat=named(e['actor_id'])))
+    mail = [dict(**{'from': named(m['from_actor_id']), 'to': named(m['to_actor_id'])}, at=m['created_at'], text=_title(m['text'], 600), id=m['message_id']) for m in feed['mail']['items']]
+    for m, raw in zip(mail, feed['mail']['items']):
+        activity.append(dict(kind='mail', room=room_of(raw['from_actor_id'], raw['to_actor_id']), item_id=m['id'], at=m['at'], title='%s to %s: %s' % (m['from'], m['to'], _title(m['text'], 100)), seat=m['to'] if m['from'] == 'operator' else m['from']))
+    activity.sort(key=lambda e: e['at'], reverse=True)
+    requests = [dict(seat=named(q['actor_id']), at=q['corrected_at'], text=_title(q['text'], 600)) for q in feed['questions']['items']]
+    out.update(seats=seats, activity=activity[:80], mail=sorted(mail, key=lambda m: m['at'], reverse=True)[:20], requests=requests[:40],
+               stats=dict(requests=len(requests), tool_calls_1h=_tool_calls(office_db, now)),
+               office=dict(state='running' if any(v['status'] == 'working' for v in seats.values()) else 'quiet', epoch=feed['roster']['items'][0]['epoch_id'] if feed['roster']['items'] else None,
+                         heartbeat_at=max((v['last_at'] for v in seats.values() if v['last_at'] is not None), default=None)))
+    return out
 
 
 # ---- project panels

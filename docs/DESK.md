@@ -58,3 +58,19 @@ A tool whose config key is missing, or whose file cannot be read, answers `{"sta
 | Situation | none: a world map |
 
 Unknown or empty on purpose, because this store holds nothing for them: prediction strategies, perps and stock margin returns, the scanner, headlines, world-map stories and the paper charts. Those header stats are replaced by this office's own (seats awake, wakes, tokens, mail, requests, tool calls, paper book). The map draws no points. The source page's other rooms (Strategy Lab, Paper Labs, Explorer, Memes, Sports, Video rule lab, Coach, Control) are not ported. The Trading book is `unknown` unless `--ledger-db` is given: it counts open and closed orders, wins and net of costs for closed orders with a recorded exit price (modelled fills, no landing proof).
+
+
+## The seat floor page
+
+`floor/` is the source project's rooms page with this office's seats. `floor/rooms.json` maps seats to rooms (a role not listed sits in Research):
+
+| room | seats |
+|---|---|
+| Newsroom | narrative |
+| Research | scout, researcher, forensics |
+| Debate | judge, judge_gpt |
+| Decision | head |
+| Trading | none: the paper book |
+| Situation | none: a world map |
+
+Unknown or empty on purpose, because this store holds nothing for them: prediction strategies, perps and stock margin returns, the scanner, headlines, world-map stories and the paper charts. Those header stats are replaced by this office's own (seats awake, wakes, tokens, mail, requests, tool calls, paper book). The map draws no points. The source page's other rooms (Strategy Lab, Paper Labs, Explorer, Memes, Sports, Video rule lab, Coach, Control) are not ported. The Trading book is `unknown` unless `--ledger-db` is given: it counts open and closed orders, wins and net of costs for closed orders with a recorded exit price (modelled fills, no landing proof).
