@@ -13,12 +13,13 @@ import uuid
 
 from .. import clock as K
 from ..seat_tools import MAX_OUTPUT, result
-from . import market as M
+from . import market as M, ticks as TK
 
 MAX_SHEET = 48000
 RESULTS_MAX = 60
 FEED_MAX = 50
-ORDER_ROLES = ('judge', 'judge_gpt')
+ORDER_ROLES = ('judge', 'judge_gpt', 'copy_desk')
+TPSL_ROLES = ('copy_desk',)   # these seats must state both a stop and a take-profit on every order
 RESULTS_ROLES = ('head', 'scout') + ORDER_ROLES
 BOOK_ROLES = ('head',) + ORDER_ROLES
 SEAT_RAILS = ('sl_pct', 'tp_pct', 'trail_pct')
@@ -244,7 +245,8 @@ def _sheet(tools, evidence, row):
         missing += [dict(part='now_read', reason='sheet_live_off'), dict(part='trades_60s', reason='sheet_live_off')]
         return dict(state='partial', reason='sheet_incomplete', missing=missing, sheet=sheet)
     now = _now(tools) or tools.clock()
-    snap, at, why = M.read_pair(mint=row[0], pool=row[1])
+    chain = row[6] if len(row) > 6 and row[6] else 'solana'
+    snap, at, why = M.read_pair(mint=row[0], pool=row[1], chain=chain)
     if snap is None:
         sheet['now_read'] = dict(state='unknown', reason=why, source='dexscreener:pairs', fetched_at=at)
         missing.append(dict(part='now_read', reason=why))
@@ -252,8 +254,10 @@ def _sheet(tools, evidence, row):
         d0 = (dec or {}).get('price_usd')
         sheet['now_read'] = dict(state='known', source='dexscreener:pairs', fetched_at=at, age_vs_ticket_s=round(at - (_stamp(row[4]) or at)), snapshot=snap,
                                  price_change_since_ticket_pct=round((snap['price_usd'] / d0 - 1.) * 100., 4) if d0 and snap['price_usd'] else None, note='provider claim, not a fill price')
-    trades = M.trades_window(row[1] or (snap or {}).get('pair'), now) if (row[1] or snap) else dict(state='unknown', reason='pool_unknown')
+    trades = M.trades_window(row[1] or (snap or {}).get('pair'), now, chain=chain) if (row[1] or snap) else dict(state='unknown', reason='pool_unknown')
     sheet['trades_60s'] = trades
+    if tools.cfg.get('ticks_db'):   # the 1 s recorder's last two minutes, when this seat reads them (extra: never blocks `known`)
+        sheet['ticks_120s'] = TK.summary(tools.cfg['ticks_db'], chain, row[0], now - 120., now)
     if trades['state'] != 'known':
         missing.append(dict(part='trades_60s', reason=trades['reason']))
     if missing:
@@ -271,7 +275,7 @@ def sheet_read(tools, ticket_id):
         return unknown('desk_config_unknown')
     try:
         with closing(ro(path)) as conn:
-            row = conn.execute("SELECT mint,pool,verdict,reason,ts,substr(inputs_json,1,65536) FROM desk_tickets WHERE ticket_id=? AND stage='hard_filter' ORDER BY id DESC LIMIT 1", (ticket_id,)).fetchone()
+            row = conn.execute("SELECT mint,pool,verdict,reason,ts,substr(inputs_json,1,65536),network_id FROM desk_tickets WHERE ticket_id=? AND stage='hard_filter' ORDER BY id DESC LIMIT 1", (ticket_id,)).fetchone()
     except (OSError, sqlite3.Error):
         return unknown('desk_unreadable')
     if row is None:
@@ -338,13 +342,15 @@ def book_view(tools):
     try:
         with closing(ro(ledger)) as conn:
             conn.row_factory = sqlite3.Row
-            rows = conn.execute("SELECT order_id,mint,pool,state,filled_at,spend_usd FROM orders WHERE book_id=? AND state IN ('pending','open') ORDER BY requested_at,order_id LIMIT 100", (book,)).fetchall()
+            rows = conn.execute("SELECT order_id,mint,pool,state,filled_at,spend_usd,costs_usd FROM orders WHERE book_id=? AND state IN ('pending','open') ORDER BY requested_at,order_id LIMIT 100", (book,)).fetchall()
             positions = []
             valued = 'value_usd' in {c[1] for c in conn.execute('PRAGMA table_info(marks)')}   # the Office ledger prices marks in USD; the source project's ledger does not
             for r in rows:
                 mark = conn.execute('SELECT at,lamports%s FROM marks WHERE order_id=? AND at<=? ORDER BY at DESC LIMIT 1' % (',value_usd,price_usd' if valued else ''), (r['order_id'], now)).fetchone()
                 positions.append(dict(r, mark_at=mark['at'] if mark else None, mark_age_s=now - mark['at'] if mark else None, mark_lamports=mark['lamports'] if mark else None,
                                       mark_price_usd=mark['price_usd'] if mark and valued else None, mark_value_usd=mark['value_usd'] if mark and valued else None))
+            initial = conn.execute('SELECT COALESCE(SUM(usd),0) FROM capital_flows WHERE book_id=? AND kind=\'initial\'', (book,)).fetchone()[0] if 'kind' in {c[1] for c in conn.execute('PRAGMA table_info(capital_flows)')} else None
+            realized_all = conn.execute("SELECT COALESCE(SUM(c.usd),0) FROM cashflows c JOIN orders o USING(order_id) WHERE o.book_id=? AND o.state='closed'", (book,)).fetchone()[0]
             cash = conn.execute('SELECT COALESCE(SUM(usd),0) FROM capital_flows WHERE book_id=? AND at<=?', (book, now)).fetchone()[0] \
                 + conn.execute('SELECT COALESCE(SUM(c.usd),0) FROM cashflows c JOIN orders o USING(order_id) WHERE o.book_id=? AND c.at<=?', (book, now)).fetchone()[0]
             realized = conn.execute("SELECT COALESCE(SUM(c.usd),0) FROM cashflows c JOIN orders o USING(order_id) WHERE o.book_id=? AND o.state='closed' AND o.closed_at>=?", (book, now - now % 86400)).fetchone()[0]
@@ -361,7 +367,12 @@ def book_view(tools):
         equity = dict(state='known', usd=cash + sum(p['mark_value_usd'] for p in positions), cash_usd=cash, unpriced_count=0, valuation='modelled_net_exit_value')
     with closing(own(tools)) as conn:
         halt = entry_halt(conn, tools.epoch)
-    doc = dict(book_id=book, as_of=now, positions=positions, positions_over_cap=cap is not None and len(positions) > cap, equity=equity, daily_realized_usd=realized,
+    for p in positions:   # unrealized = modelled net exit value at the newest FRESH mark minus what the entry cost (spend + entry fee); None when unpriced
+        p['unrealized_usd'] = None if p in unpriced or p['spend_usd'] is None else p['mark_value_usd'] - p['spend_usd'] - (p['costs_usd'] or 0.)
+    unreal = [p['unrealized_usd'] for p in positions]
+    pnl = dict(realized_usd=realized_all, unrealized_usd=sum(unreal) if None not in unreal else None, unpriced_count=unreal.count(None), initial_usd=initial)
+    pnl['total_usd'] = None if pnl['unrealized_usd'] is None else realized_all + pnl['unrealized_usd']
+    doc = dict(book_id=book, as_of=now, pnl=pnl, positions=positions, positions_over_cap=cap is not None and len(positions) > cap, equity=equity, daily_realized_usd=realized,
                daily_loss_usd=daily_loss, daily_loss_halted=realized <= -daily_loss if isinstance(daily_loss, (int, float)) else None, entry_halt=halt)
     if daily_loss is None:
         doc['policy_state'] = 'unknown'
@@ -419,8 +430,11 @@ def paper_order(tools, ticket_id, reason, thesis=None, disproof=None, exit_plan=
     plan = dict(thesis=thesis, disproof=disproof, exit_plan=exit_plan)
     if not all(isinstance(v, str) and v.strip() and len(v) <= 400 for v in plan.values()):
         return refused('plan_required', hint='thesis, disproof and exit_plan: each one non-empty line, at most 400 characters')
-    if role_of(tools) not in ORDER_ROLES:
+    role = role_of(tools)
+    if role not in ORDER_ROLES:
         return refused('role_cannot_order')
+    if role in TPSL_ROLES and (sl_pct is None or tp_pct is None):
+        return refused('tp_sl_required', hint='this seat must set both sl_pct and tp_pct on every order; the order is a market entry that exits at them')
     rails = {k: v for k, v in (('sl_pct', sl_pct), ('tp_pct', tp_pct), ('trail_pct', trail_pct)) if v is not None}
     if rails:
         policy = policy_of(tools)

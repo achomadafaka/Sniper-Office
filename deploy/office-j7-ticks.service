@@ -1,0 +1,25 @@
+# The price recorder and live PnL writer: about one DexScreener batch lookup a second for open positions and J7 signal windows; writes ticks to the J7 db and desk_live_pnl to the office db.
+# Install: copy to ~/.config/systemd/user/, set the paths below, then
+#   systemctl --user enable --now office-j7-ticks
+# Config: config/j7_ticks.example.json. Point the paper filler's ticks_db at the same file (config/paper_filler_copy.example.json).
+[Unit]
+Description=Office J7 tick recorder
+After=network-online.target
+
+[Service]
+Type=simple
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 -m sniper_office.desk.ticks --config /etc/myproject/j7_ticks.json
+Restart=always
+RestartSec=10
+Nice=5
+MemoryMax=256M
+CPUQuota=50%
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.local/share/sniper-office
+PrivateTmp=yes
+
+[Install]
+WantedBy=default.target

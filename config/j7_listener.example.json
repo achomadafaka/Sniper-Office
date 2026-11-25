@@ -1,0 +1,12 @@
+{
+  "j7_env": "/path/to/run/config/j7.env",
+  "j7_db": "/path/to/run/data/j7.db",
+  "traders_file": "/path/to/run/config/j7_traders.json",
+  "min_usd": {"default": 200},
+  "min_mcap_ratio": 0,
+  "thesis_min_holding_usd": 0,
+  "max_age_s": 300,
+  "watch_after_signal_s": 600,
+  "accept_unlisted": false,
+  "refresh": true
+}

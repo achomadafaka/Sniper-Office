@@ -9,7 +9,7 @@ import sqlite3
 
 from . import paper as P
 
-NO_FEED_ROLES = ('researcher', 'narrative')
+NO_FEED_ROLES = ('researcher', 'narrative', 'copy_desk')   # copy_desk is woken by its own J7 signals (copydesk.py), not by feed tickets
 SCHEMA = 'CREATE TABLE IF NOT EXISTS desk_wakes(actor_id TEXT NOT NULL,kind TEXT NOT NULL,key TEXT NOT NULL,at REAL NOT NULL,PRIMARY KEY(actor_id,kind,key))'
 
 

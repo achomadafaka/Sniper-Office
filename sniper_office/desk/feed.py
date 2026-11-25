@@ -26,6 +26,8 @@ import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 
+from . import chains as CH
+
 log = logging.getLogger('desk.feed')
 WSOL = 'So11111111111111111111111111111111111111112'
 TOKEN_2022 = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb'
@@ -174,8 +176,10 @@ def check(status, reason, source, fetched_at, **values):
     return dict(status=status, reason=reason, source=source, fetched_at=fetched_at, **values)
 
 
-def best_pair(doc, mint):
-    pairs = [p for p in (doc.get('pairs') or []) if isinstance(p, dict) and p.get('chainId') == 'solana' and (p.get('baseToken') or {}).get('address') == mint and isinstance(p.get('pairAddress'), str) and B58.fullmatch(p['pairAddress'])] if isinstance(doc, dict) else []
+def best_pair(doc, mint, chain='solana'):
+    """The deepest pair of `mint` on `chain` (DexScreener chainId). Solana pair addresses must be base58; other chains' are any plain address, EVM compared case-insensitively."""
+    ok = (lambda a: isinstance(a, str) and B58.fullmatch(a)) if chain == 'solana' else CH.valid_address
+    pairs = [p for p in (doc.get('pairs') or []) if isinstance(p, dict) and p.get('chainId') == chain and CH.same_address((p.get('baseToken') or {}).get('address'), mint) and ok(p.get('pairAddress'))] if isinstance(doc, dict) else []
     return max(pairs, key=lambda p: num((p.get('liquidity') or {}).get('usd')) or 0., default=None)
 
 
@@ -222,10 +226,11 @@ def market_checks(pair, now, cfg, at):
     else:
         age = now - created / 1000.
         old = age > cfg['max_pair_age_s']
-        prints = (num(txns.get('buys')) or 0.) + (num(txns.get('sells')) or 0.)
+        b5, s5 = num(txns.get('buys')), num(txns.get('sells'))
+        prints = None if b5 is None or s5 is None else b5 + s5   # a missing count is unknown, never 0 (a provider 0 stays 0)
         # Sniper's chart rule: fewer than 2 recent prints is an unknown chart (chart_60s_prints_lt_2), never a pass; here the window is the provider's m5 count
-        quiet = prints < cfg['min_prints_m5']
-        checks['chart'] = check('kill' if old else 'unknown' if quiet else 'pass', 'pair_too_old' if old else 'chart_prints_lt_2' if quiet else 'age_and_activity_present', src, at, age_s=round(age), max_age_s=cfg['max_pair_age_s'],
+        quiet = prints is not None and prints < cfg['min_prints_m5']
+        checks['chart'] = check('unknown' if prints is None else 'kill' if old else 'unknown' if quiet else 'pass', 'm5_txns_missing' if prints is None else 'pair_too_old' if old else 'chart_prints_lt_2' if quiet else 'age_and_activity_present', src, at, age_s=round(age), max_age_s=cfg['max_pair_age_s'],
                                 txns_m5=txns, prints_m5=prints, min_prints_m5=cfg['min_prints_m5'])
     buys, sells = (num(txns.get(k)) if isinstance(txns, dict) else None for k in ('buys', 'sells'))
     if buys is not None and sells is not None and buys >= 20 and sells == 0:

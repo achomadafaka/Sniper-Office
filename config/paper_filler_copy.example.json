@@ -1,0 +1,15 @@
+{
+  "_comment": "paper_filler.example.json with the copy book added (own policy file, a mark and exit check every second from the ticks). tick_s 1 makes the loop read the request table every second; other books keep their 15 s lookups.",
+  "office_db": "/path/to/office.db",
+  "ledger_db": "/path/to/sniper-office/ledger.db",
+  "book_policy": "/path/to/book_policy.json",
+  "clock_file": "/path/to/clock_offset.json",
+  "ticks_db": "/path/to/run/data/j7.db",
+  "tick_max_age_s": 5,
+  "books": [
+    {"book_id": "office-v2-explore-1", "actor_ids": ["ag_judge_actor_id"], "capital_usd": 1000.0},
+    {"book_id": "office-v2-copy-1", "actor_ids": ["ag_REPLACE16HEXCHARS"], "capital_usd": 1000.0, "book_policy": "/path/to/book_policy_copy.json", "mark_every_s": 1}
+  ],
+  "tick_s": 1,
+  "mark_every_s": 15
+}

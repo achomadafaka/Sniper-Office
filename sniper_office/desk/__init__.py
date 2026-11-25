@@ -12,7 +12,7 @@ import subprocess
 import sys
 
 from ..seat_tools import MAX_OUTPUT, result
-from . import brain as BR, chain_data as C, market as M, paper as P, wakes as WK, wallet_network as N
+from . import brain as BR, chain_data as C, copydesk as CD, market as M, paper as P, wakes as WK, wallet_network as N
 
 HINTS = {
     'chain_wallet_history': 'address is a Solana address; limit, before and as_of are optional, and as_of is Unix seconds',
@@ -67,11 +67,11 @@ def chain_token_holders(tools, mint):
     return _chain_call(tools, 'token_holders', mint=mint)
 
 
-def market_data(tools, mint=None, pool=None):
+def market_data(tools, mint=None, pool=None, chain='solana'):
     """The provider's current pool numbers (DexScreener, public, no key), read by the host. A claim with its fetch time, never a fill price."""
     if P.role_of(tools) is None:
         return P.refused('seat_not_in_epoch')
-    snap, at, why = M.read_pair(mint=mint, pool=pool)
+    snap, at, why = M.read_pair(mint=mint, pool=pool, chain=chain)
     if snap is None:
         return P.unknown(why, source='dexscreener:pairs', fetched_at=at)
     return P.out(dict(state='known', source='dexscreener:pairs', provider_claim=snap, fetched_at=at, note='not a fill price: a provider claim at fetched_at; the desk fills at its own quote lookup'))
@@ -169,8 +169,8 @@ TOOLS = (
     ('chain', 'chain_transaction', 'One finalized Solana transaction: signer, fee, SOL and token balance changes. No names, memos or logs.', {'signature': S}, ['signature'], chain_transaction),
     ('chain', 'chain_funding_trace', 'Candidate funding evidence for a Solana wallet: the first SOL payer by a named rule, up to 3 hops, slow on purpose. Needs the research key; unknown without it.', {'wallet': S, 'hops': {'type': 'integer'}}, ['wallet'], chain_funding_trace),
     ('chain', 'chain_token_holders', 'Largest token accounts of a mint with their owners, now only. owners says known, partial or unknown; a pool or exchange can be an owner.', {'mint': S}, ['mint'], chain_token_holders),
-    ('market', 'market_data', 'Current public market numbers for a Solana pool (DexScreener, no key): price, run-up m5/h1/h6/h24, volume, txns, pool reserves, liquidity, age, fdv. Give a pool, or a mint for its deepest pool. A provider claim with its fetch time, not a fill price.',
-     {'mint': S, 'pool': S}, [], market_data),
+    ('market', 'market_data', 'Current public market numbers for a pool on any DexScreener chain (chain: solana by default, base, bsc, ethereum, ...; DexScreener, no key): price, run-up m5/h1/h6/h24, volume, txns, pool reserves, liquidity, age, fdv. Give a pool, or a mint for its deepest pool. A provider claim with its fetch time, not a fill price.',
+     {'mint': S, 'pool': S, 'chain': S}, [], market_data),
     ('network', 'network_expand', 'Forensics: expand the wallet network from a seed through the host: a wallet funding trace or a mint top-20 holders, kind wallet or mint, hops 1 to 3. Stops typed at the daily credit cap.',
      {'seed': S, 'kind': S, 'hops': {'type': 'integer'}}, ['seed'], network_expand),
     ('network', 'network_read', 'Forensics: read the wallet network around a seed, hops 1 or 2. Edges carry source, time and proof. A funder is evidence, not control. No edge is not no link: read coverage. as_of uses discovery time; verified_only excludes claimed edges.',
@@ -185,4 +185,5 @@ def register(host):
         host.add_tool(name, description, properties, required, handler, group=group)
     WK.register(host)
     BR.register(host)
+    CD.register(host)
     host.add_labels(lambda tools: dict(chain_fetch_ids=list(tools.plugin_state.get('chain_fetch_ids', [])), brain_fact_ids=list(tools.plugin_state.get('brain_fact_ids', []))))

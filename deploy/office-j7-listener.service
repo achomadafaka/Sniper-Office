@@ -1,0 +1,28 @@
+# The J7 pro-trader listener: follows the selected traders on the J7 relay and stores accepted signals and their tickets. Paper only: read-only listening, no key, no wallet.
+# Install: copy to ~/.config/systemd/user/, set the paths below, then
+#   systemctl --user enable --now office-j7-listener
+# Config: config/j7_listener.example.json. One listener per db (flock on <j7_db>.j7.lock).
+# It renews the J7 session in place: the rotated cookie pair is written back to the env file, so that file's directory must be writable.
+# Do not run it against a session another process also refreshes: a rotation invalidates the other copy. Set "refresh": false there.
+[Unit]
+Description=Office J7 pro-trader listener
+After=network-online.target
+
+[Service]
+Type=simple
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 -m sniper_office.desk.j7 --config /etc/myproject/j7_listener.json
+Restart=always
+RestartSec=20
+Nice=5
+MemoryMax=256M
+CPUQuota=50%
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+# The signals db directory (WAL files beside it) and the directory holding the J7 env file (atomic replace writes a temp file there).
+ReadWritePaths=%h/.local/share/sniper-office %h/.config/sniper-office
+PrivateTmp=yes
+
+[Install]
+WantedBy=default.target

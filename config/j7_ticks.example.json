@@ -1,0 +1,10 @@
+{
+  "j7_db": "/path/to/run/data/j7.db",
+  "ledger_db": "/path/to/run/data/ledger.db",
+  "office_db": "/path/to/run/data/office.db",
+  "books": ["office-v2-copy-1"],
+  "tick_s": 1,
+  "max_req_per_cycle": 4,
+  "retention_days": 7,
+  "tick_max_age_s": 10
+}

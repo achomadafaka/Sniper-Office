@@ -1,0 +1,550 @@
+{
+ "_comment": "Seeded 2026-11-25 from the source project's J7 tracked lists (j7_tracked_wallets, fomo accounts 0+1 and pump account 0, last seen 2026-11-23) joined to its memecoin_wallets roster; tier armed = the source project's real_approved wallets. Edit freely: a trader is followed when its id or handle is listed. min_usd per trader and chains (DexScreener chainIds) are optional.",
+ "traders": [
+  {
+   "id": "0a316de1-c4bc-5131-978f-e1209f1df4c4",
+   "handle": "Morgoth11",
+   "tier": "tracked"
+  },
+  {
+   "id": "0bbbf8fd-dea4-5561-bd2e-54f98a573ff8",
+   "handle": "DexGemsReal",
+   "tier": "tracked"
+  },
+  {
+   "id": "1c4f6c67-d744-58c7-bf09-2d0150150226",
+   "handle": "Ew4rdo",
+   "tier": "tracked"
+  },
+  {
+   "id": "22140383-e690-592d-9cc9-2ac49f16040f",
+   "handle": "prevaile",
+   "tier": "tracked"
+  },
+  {
+   "id": "2251aa65-06e0-5845-bacb-75bdbae5dd31",
+   "handle": "tontheneko",
+   "tier": "tracked"
+  },
+  {
+   "id": "22ccf5db-5524-50d9-8eab-cfdd13aadd4a",
+   "handle": "swabbie3",
+   "tier": "tracked"
+  },
+  {
+   "id": "254245a7-575a-51be-9bc3-090a924789eb",
+   "handle": "starcatcher444",
+   "tier": "tracked"
+  },
+  {
+   "id": "2e955ffc-6fac-578a-93d8-3324605f6bed",
+   "handle": "change",
+   "tier": "tracked"
+  },
+  {
+   "id": "2f672788-0d2a-59f9-890d-b2c2316eb0bd",
+   "handle": "0xsneakky",
+   "tier": "tracked"
+  },
+  {
+   "id": "30363fdb-12e2-5b3f-ae64-29aa2818094c",
+   "handle": "seralberttrades",
+   "tier": "tracked"
+  },
+  {
+   "id": "36565fe5-7f8b-5a43-a8d0-c76b12f44225",
+   "handle": "Quanterty",
+   "tier": "tracked"
+  },
+  {
+   "id": "37d7f7be-a3fb-52a1-80b6-181d668aadfb",
+   "handle": "bystevenr",
+   "tier": "tracked"
+  },
+  {
+   "id": "3828c75f-2a77-5cb7-8c9a-3621afa5d3c5",
+   "handle": "wwayfboss",
+   "tier": "tracked"
+  },
+  {
+   "id": "43dba179-1072-5d94-a697-9b1315f196d1",
+   "handle": "farmerpcs",
+   "tier": "tracked"
+  },
+  {
+   "id": "46b8c9e1-3955-5744-8c98-0f37820bbba0",
+   "handle": "v22nik",
+   "tier": "tracked"
+  },
+  {
+   "id": "4836afb1-7b40-5167-be41-b5703ccd7c2a",
+   "handle": "wileEcoyote",
+   "tier": "tracked"
+  },
+  {
+   "id": "5177f7e1-9046-5384-ad61-855af860e37c",
+   "handle": "JustMereGuppy",
+   "tier": "tracked"
+  },
+  {
+   "id": "56d025ac-22f2-5bea-960d-7a7db846c0a9",
+   "handle": "origin",
+   "tier": "tracked"
+  },
+  {
+   "id": "5a8c249c-5215-5d34-a826-982a74bac9ee",
+   "handle": "vinnysosfan",
+   "tier": "tracked"
+  },
+  {
+   "id": "5bffe890-8a6f-5e51-973e-bb86f9e53ea0",
+   "handle": "iexilium",
+   "tier": "tracked"
+  },
+  {
+   "id": "61902b09-5394-5cf3-83ed-ea5fa93e963a",
+   "handle": "397397",
+   "tier": "tracked"
+  },
+  {
+   "id": "63993bb2-2afb-50c3-8eca-cb186edbe849",
+   "handle": "bigwarzeth",
+   "tier": "tracked"
+  },
+  {
+   "id": "64db98ca-b969-5248-9ff8-f9d3c5e229f1",
+   "handle": "jpegkite",
+   "tier": "tracked"
+  },
+  {
+   "id": "681c6d8c-e914-537a-bc15-7c1c164f2b21",
+   "handle": "lorddror123",
+   "tier": "tracked"
+  },
+  {
+   "id": "684b9477-bdb9-5cd0-84b3-929ff28fdbf0",
+   "handle": "VexRex23",
+   "tier": "tracked"
+  },
+  {
+   "id": "6a35d911-8221-513b-918c-dbf937663663",
+   "handle": "letsgopenguin",
+   "tier": "tracked"
+  },
+  {
+   "id": "6e6d68f3-7e14-5024-8e67-2a0fa85e8470",
+   "handle": "fmpumpguy",
+   "tier": "tracked"
+  },
+  {
+   "id": "6eded5cb-8146-5627-9112-8e954ad3756d",
+   "handle": "OmakaseOnly",
+   "tier": "tracked"
+  },
+  {
+   "id": "7069ef7a-7db3-5164-b3d3-b44237d2bb6a",
+   "handle": "chrollo0o0",
+   "tier": "tracked"
+  },
+  {
+   "id": "707c2452-f600-53b4-b55a-357a3aefcc2e",
+   "handle": "BtheBezel",
+   "tier": "tracked"
+  },
+  {
+   "id": "72460ae6-1ddc-5a56-b155-f8e187a4f388",
+   "handle": "0xdetweiler",
+   "tier": "armed",
+   "chains": null
+  },
+  {
+   "id": "77c35530-9337-550b-a1dd-fe2ea7098552",
+   "handle": "admiralfinest",
+   "tier": "tracked"
+  },
+  {
+   "id": "77e21536-699d-557a-8e0a-989424b01c62",
+   "handle": "wealthmaxxer",
+   "tier": "tracked"
+  },
+  {
+   "id": "79513370-6087-5989-bcba-5c23f235a862",
+   "handle": "DONBAGS",
+   "tier": "tracked"
+  },
+  {
+   "id": "7c68dc7c-1506-5134-aafd-5469e04ce82f",
+   "handle": "songz",
+   "tier": "tracked"
+  },
+  {
+   "id": "83ea682c-3657-501f-a8d3-3082aa07397f",
+   "handle": "MemeCooksx",
+   "tier": "tracked"
+  },
+  {
+   "id": "8b335839-be76-5946-8d11-885f628774df",
+   "handle": "0xdedrater",
+   "tier": "tracked"
+  },
+  {
+   "id": "90ba7190-9667-551d-bc07-01c5b55cb740",
+   "handle": "sunnydog06",
+   "tier": "tracked"
+  },
+  {
+   "id": "91a0dbd7-162f-5a58-b77c-2b1627dadc6e",
+   "handle": "memeticpower",
+   "tier": "tracked"
+  },
+  {
+   "id": "921107ae-b3e0-5d1a-9077-872158119c14",
+   "handle": "vascodicaprio",
+   "tier": "tracked"
+  },
+  {
+   "id": "939098d4-d7bf-56cd-a34e-2be3c3e0fd1d",
+   "handle": "hopa",
+   "tier": "tracked"
+  },
+  {
+   "id": "93b8c6e5-9795-59e7-8c79-77b227f78fdf",
+   "handle": "Tekkerrss",
+   "tier": "tracked"
+  },
+  {
+   "id": "967c86a1-2b18-53ee-ba1d-e86c6000aad3",
+   "handle": "degen_ak",
+   "tier": "tracked"
+  },
+  {
+   "id": "9adfd445-707d-5eff-82c0-4466c0deac4b",
+   "handle": "llonchain",
+   "tier": "tracked"
+  },
+  {
+   "id": "9c51a08a-2e0a-599d-931b-306f106a7515",
+   "handle": "CryoPalmar",
+   "tier": "tracked"
+  },
+  {
+   "id": "9e953765-5056-5868-98dc-590e46d24cab",
+   "handle": "Dannnny69",
+   "tier": "tracked"
+  },
+  {
+   "id": "a1a13516-71ce-5191-8b55-089125ade8a1",
+   "handle": "loganlim_x",
+   "tier": "tracked"
+  },
+  {
+   "id": "a3d6096e-59eb-5684-a9fe-0048e07a0eb4",
+   "handle": "DopamineFeenFr1",
+   "tier": "tracked"
+  },
+  {
+   "id": "a7f6ddd3-dbb8-5fff-925e-b2ce6c1c51d4",
+   "handle": "ZestyKeenOx",
+   "tier": "tracked"
+  },
+  {
+   "id": "ad7a5a54-ad1e-5170-9739-8f5060cd2ca6",
+   "handle": "badabeepp",
+   "tier": "armed",
+   "chains": null
+  },
+  {
+   "id": "aec1c1f6-b3a3-5d70-9ee5-1c9fb7c0aa4a",
+   "handle": "martinzz",
+   "tier": "tracked"
+  },
+  {
+   "id": "aefe2ddd-c580-5245-a2f5-e4ed62f7ef10",
+   "handle": "frankdegods",
+   "tier": "tracked"
+  },
+  {
+   "id": "afa9b8ff-a5fb-589f-be46-66c439ada0d8",
+   "handle": "BarBarrBinks",
+   "tier": "tracked"
+  },
+  {
+   "id": "b0f31426-5721-5b65-82f9-652c49c3cd74",
+   "handle": "figaro",
+   "tier": "tracked"
+  },
+  {
+   "id": "b334e140-cf1a-527a-95d6-94d79a64c4b1",
+   "handle": "RedCorvette",
+   "tier": "tracked"
+  },
+  {
+   "id": "b3a9a5b7-c3c5-5e46-a89c-a787e369629d",
+   "handle": "0xLingard",
+   "tier": "tracked"
+  },
+  {
+   "id": "b49a7a36-fa2f-592d-9abc-8410e77aebc1",
+   "handle": "noballsmcgee",
+   "tier": "tracked"
+  },
+  {
+   "id": "b55de48d-38d0-57b8-96b7-179831fb07e4",
+   "handle": "Pasterniq",
+   "tier": "tracked"
+  },
+  {
+   "id": "b7e0a1f4-266d-5b9a-befd-df821836e2c5",
+   "handle": "yansanity",
+   "tier": "tracked"
+  },
+  {
+   "id": "b81c99b9-4ec3-546b-b0d4-3c899ec4e652",
+   "handle": "redemptionjizzy",
+   "tier": "tracked"
+  },
+  {
+   "id": "bb2ab76d-f022-53a1-820e-a5f46522576b",
+   "handle": "koy",
+   "tier": "tracked"
+  },
+  {
+   "id": "be51fad1-cc8c-5d95-ba03-b1b59f2e48ae",
+   "handle": "arangotrades",
+   "tier": "tracked"
+  },
+  {
+   "id": "bf3d18fc-42db-5f6a-a7b4-26f285c0b2d9",
+   "handle": "MontyInFull",
+   "tier": "tracked"
+  },
+  {
+   "id": "c3772422-819a-5f6c-8fce-96376139ef69",
+   "handle": "GenerationalFumbler",
+   "tier": "tracked"
+  },
+  {
+   "id": "c3eac5cf-e699-5d5b-8593-a767ea739932",
+   "handle": "bluntz_capital",
+   "tier": "tracked"
+  },
+  {
+   "id": "c74fb1a1-ac13-5dbb-af23-d28a78650f49",
+   "handle": "littlemustacho",
+   "tier": "tracked"
+  },
+  {
+   "id": "c9a1dbde-01fe-5574-98da-42d61a99d9ab",
+   "handle": "cissy",
+   "tier": "tracked"
+  },
+  {
+   "id": "cc96aa7d-9777-5013-8029-449c6456e4b0",
+   "handle": "0xangeryy",
+   "tier": "tracked"
+  },
+  {
+   "id": "d269fa93-4cdf-57e3-8265-1763c85cacd1",
+   "handle": "onmycheck",
+   "tier": "tracked"
+  },
+  {
+   "id": "d47559fc-02c3-5165-b94f-1316fdd19560",
+   "handle": "NotARandomUser",
+   "tier": "armed",
+   "chains": null
+  },
+  {
+   "id": "d6a85eb5-d3fb-5b8a-8445-019af88ba512",
+   "handle": "ExactTallTakin",
+   "tier": "tracked"
+  },
+  {
+   "id": "dc0de758-7d4b-5054-bb8f-379cd87ff9fc",
+   "handle": "DipWheeler",
+   "tier": "tracked"
+  },
+  {
+   "id": "df633f03-2da4-5f30-abc7-5d49b681f832",
+   "handle": "JarlBalgruuf",
+   "tier": "tracked"
+  },
+  {
+   "id": "e0fbc16b-1c05-5d07-82fb-488310051e92",
+   "handle": "Onchainmetrics",
+   "tier": "tracked"
+  },
+  {
+   "id": "e26ad7a1-3d9b-51ec-ac86-f1ab4c96c619",
+   "handle": "trader_seks",
+   "tier": "tracked"
+  },
+  {
+   "id": "e55a4d6f-dd26-5b56-9ded-9296ca8f199d",
+   "handle": "Thokani",
+   "tier": "tracked"
+  },
+  {
+   "id": "e8d56799-ed96-54cf-92ff-31feee0db00c",
+   "handle": "notanicecat69",
+   "tier": "tracked"
+  },
+  {
+   "id": "ece2c907-bbcb-50e2-bcf7-49c9bb7ed3b1",
+   "handle": "Numerooo0",
+   "tier": "tracked"
+  },
+  {
+   "id": "eebd5919-a9dd-5374-90ca-52fd7554bf42",
+   "handle": "nadomac",
+   "tier": "tracked"
+  },
+  {
+   "id": "f39a990f-3152-5451-b0a4-c040019fa18b",
+   "handle": "y1111",
+   "tier": "tracked"
+  },
+  {
+   "id": "fb0c112f-45ba-54f7-b5ac-910c4e1ec6bb",
+   "handle": "DegenCapitalLLC",
+   "tier": "tracked"
+  },
+  {
+   "id": "fd059600-3e1d-5a8c-b61d-7c0ba647e1ff",
+   "handle": "1hundredx",
+   "tier": "tracked"
+  },
+  {
+   "id": "ff03cead-db17-5f20-b8aa-b2cae7e15d6a",
+   "handle": "ResellCalendar",
+   "tier": "armed",
+   "chains": null
+  },
+  {
+   "id": "ffc526bb-b778-56db-9801-a2d0ffaf0972",
+   "handle": "Redactet",
+   "tier": "tracked"
+  },
+  {
+   "id": "pump:2M2vLX34LXMg24dMEnjWHvRXS1tshpEDRWzmXgV8ENNZ",
+   "handle": "SossaDotKek",
+   "tier": "tracked"
+  },
+  {
+   "id": "pump:2T5NgDDidkvhJQg8AHDi74uCFwgp25pYFMRZXBaCUNBH",
+   "handle": "untaxxable",
+   "tier": "tracked"
+  },
+  {
+   "id": "pump:2kW5wLFQw1wLuepZTJux1DZsTJSbNi2PGQ1E6hC7xeY8",
+   "handle": "boldshrimp68602",
+   "tier": "tracked"
+  },
+  {
+   "id": "pump:4BdKaxN8G6ka4GYtQQWk4G4dZRUTX2vQH9GcXdBREFUk",
+   "handle": "jijo",
+   "tier": "tracked"
+  },
+  {
+   "id": "pump:4DdrfiDHpmx55i4SPssxVzS9ZaKLb8qr45NKY9Er9nNh",
+   "handle": "TheMisterTurtle",
+   "tier": "tracked"
+  },
+  {
+   "id": "pump:4vw54BmAogeRV3vPKWyFet5yf8DTLcREzdSzx4rw9Ud9",
+   "handle": "notdecu",
+   "tier": "tracked"
+  },
+  {
+   "id": "pump:7SDs3PjT2mswKQ7Zo4FTucn9gJdtuW4jaacPA65BseHS",
+   "handle": "insentos",
+   "tier": "tracked"
+  },
+  {
+   "id": "pump:7moqFjvm2MwAiMtCZoqYoTAPzRBxxMRT2ddyHThQuWjr",
+   "handle": "lebomb",
+   "tier": "tracked"
+  },
+  {
+   "id": "pump:7zzSHm5bNMUwgg4dxaHWJdtB8Z9fUM8wFd2zFeor74W8",
+   "handle": "herrrrr",
+   "tier": "armed",
+   "chains": null
+  },
+  {
+   "id": "pump:AAPgisSsYHBE12CzrWsSDNgtMcska1hwTq1yDb418SNY",
+   "handle": "CopyAerialMagic",
+   "tier": "tracked"
+  },
+  {
+   "id": "pump:BQVz7fQ1WsQmSTMY3umdPEPPTm1sdcBcX9sP7o6kPRmB",
+   "handle": "limfork",
+   "tier": "tracked"
+  },
+  {
+   "id": "pump:Bi4rd5FH5bYEN8scZ7wevxNZyNmKHdaBcvewdPFxYdLt",
+   "handle": "theonomics",
+   "tier": "tracked"
+  },
+  {
+   "id": "pump:CAPn1yH4oSywsxGU456jfgTrSSUidf9jgeAnHceNUJdw",
+   "handle": "cap",
+   "tier": "tracked"
+  },
+  {
+   "id": "pump:DNsh1UfJdxmze6T6GV9QK5SoFm7HsM5TRNxVuwVgo8Zj",
+   "handle": "hashbergers",
+   "tier": "tracked"
+  },
+  {
+   "id": "pump:E7pskdV9xCCMXtsu747tjjFEMq9Fwwnvwo6fApQWBwxP",
+   "handle": "Thepennyflippe",
+   "tier": "tracked"
+  },
+  {
+   "id": "pump:EVqxB3F6iUBeWsTpBFQqWwxpqUS8s4NrzgxBvQ2VRbTq",
+   "handle": "faposhi__",
+   "tier": "tracked"
+  },
+  {
+   "id": "pump:FVZRwUp6E4m9jV4VumF8q7m8q3mF9fpikRrJSCCfFAdP",
+   "handle": "000xy_0",
+   "tier": "tracked"
+  },
+  {
+   "id": "pump:FtEhZX7CuxNwAEvrvt36oCrKUSVL6ZVVQXgSxe2VKwD7",
+   "handle": "GarnetPeachTin",
+   "tier": "tracked"
+  },
+  {
+   "id": "pump:G5nxEXuFMfV74DSnsrSatqCW32F34XUnBeq3PfDS7w5E",
+   "handle": "inertshark17431",
+   "tier": "tracked"
+  },
+  {
+   "id": "pump:GLv45A9aEknpjQ47XUX13tU8M1Bxwx5kRhWyDrSaiJUV",
+   "handle": "InnateNavySlash",
+   "tier": "tracked"
+  },
+  {
+   "id": "pump:HT5EVAzfn1CzBqbWtVKcC9CRdexcemactNQNt7tM7rSc",
+   "handle": "lockedmarlin571",
+   "tier": "tracked"
+  },
+  {
+   "id": "pump:HVWZxaTiFDz1KuzFyQuqSSLiEfD5gyhCi6V7pbQpA888",
+   "handle": "hvwzxa",
+   "tier": "tracked"
+  },
+  {
+   "id": "pump:J485YzQjuJPLYoFEYjrjxd7NAoLHTiyUU63JwK7kLxRr",
+   "handle": "0xDavid",
+   "tier": "tracked"
+  },
+  {
+   "id": "pump:ardinRsN1mNYVeoJWTBsWeYeXvuR9UUDGMsCDKpb6AT",
+   "handle": "trunoest",
+   "tier": "tracked"
+  }
+ ]
+}

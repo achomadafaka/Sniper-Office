@@ -23,6 +23,7 @@ import urllib.error
 import urllib.request
 
 from .. import clock as K
+from . import chains as CH, ticks as TK
 
 log = logging.getLogger('desk.filler')
 HOST = 'api.dexscreener.com'
@@ -83,13 +84,13 @@ class Prices:
     def __init__(self, clock, fetch=http_fetch):
         self.clock, self.fetch, self.stop_until = clock, fetch, 0.
 
-    def read(self, mint, pool):
+    def read(self, mint, pool, chain='solana'):
         now = self.clock()
         if now < self.stop_until:
             return dict(state='unknown', reason='provider_rate_limited')
-        if not (isinstance(mint, str) and mint.isalnum() and (pool is None or isinstance(pool, str) and pool.isalnum())):
+        if not (isinstance(mint, str) and mint.isalnum() and (pool is None or isinstance(pool, str) and pool.isalnum()) and CH.valid_chain(chain)):
             return dict(state='unknown', reason='bad_address')
-        url = 'https://%s/latest/dex/pairs/solana/%s' % (HOST, pool) if pool else 'https://%s/latest/dex/tokens/%s' % (HOST, mint)
+        url = 'https://%s/latest/dex/pairs/%s/%s' % (HOST, chain, pool) if pool else 'https://%s/latest/dex/tokens/%s' % (HOST, mint)
         status, doc = self.fetch(url)
         at = self.clock()
         if status == 429:
@@ -98,7 +99,7 @@ class Prices:
         if status != 200 or not isinstance(doc, dict):
             return dict(state='unknown', reason='provider_unavailable')
         pairs = doc.get('pairs') or ([doc['pair']] if isinstance(doc.get('pair'), dict) else [])
-        pairs = [p for p in pairs if isinstance(p, dict) and p.get('chainId') == 'solana' and (p.get('baseToken') or {}).get('address') == mint and (not pool or p.get('pairAddress') == pool)]
+        pairs = [p for p in pairs if isinstance(p, dict) and p.get('chainId') == chain and CH.same_address((p.get('baseToken') or {}).get('address'), mint) and (not pool or CH.same_address(p.get('pairAddress'), pool))]
         liq = lambda p: float((p.get('liquidity') or {}).get('usd') or 0) if finite((p.get('liquidity') or {}).get('usd')) else 0.
         pair = max(pairs, key=liq, default=None)
         if pair is None:
@@ -179,17 +180,35 @@ class Filler:
         self.cfg, self.clock, self.prices = cfg, clock, Prices(clock, fetch)
         self.books = {a: b['book_id'] for b in cfg['books'] for a in b['actor_ids']}
         self.ledger = open_ledger(cfg['ledger_db'])
-        try:
-            doc = json.loads(Path(cfg['book_policy']).read_text())['policy']
-        except (OSError, ValueError, KeyError, TypeError):
-            raise SystemExit('book_policy_unreadable')
-        self.policy = doc if isinstance(doc, dict) else {}
+        self.policies = {}   # a book may name its own policy file (book_policy); the rest share the top-level one
+        for b in cfg['books']:
+            try:
+                doc = json.loads(Path(b.get('book_policy') or cfg['book_policy']).read_text())['policy']
+            except (OSError, ValueError, KeyError, TypeError):
+                raise SystemExit('book_policy_unreadable')
+            self.policies[b['book_id']] = doc if isinstance(doc, dict) else {}
+        self.mark_every = {b['book_id']: b.get('mark_every_s', cfg.get('mark_every_s', 15.)) for b in cfg['books']}
+        self.ticks = None   # the 1 s recorder's db (config ticks_db): a tick fresher than tick_max_age_s is the quote, else one public lookup
         self.last_mark = {}
         now = clock()
         for b in cfg['books']:
             if not finite(b.get('capital_usd')) or b['capital_usd'] <= 0:
                 raise SystemExit('capital_usd_required:' + b['book_id'])
             self.ledger.execute("INSERT OR IGNORE INTO capital_flows(book_id,at,kind,usd,note) VALUES(?,?,'initial',?,'paper capital, filler config')", (b['book_id'], now, float(b['capital_usd'])))
+
+    def quote(self, mint, pool, chain):
+        """The price answer for a coin: the newest recorded tick when fresh, else one public lookup. Unknown stays unknown."""
+        chain = chain or 'solana'
+        if self.cfg.get('ticks_db'):
+            try:
+                if self.ticks is None:
+                    self.ticks = TK.ro(self.cfg['ticks_db'])
+                hit = TK.latest(self.ticks, chain, mint, self.clock(), self.cfg.get('tick_max_age_s', 5.))
+            except sqlite3.Error:
+                self.ticks, hit = None, None
+            if hit:
+                return hit
+        return self.prices.read(mint, pool, chain)
 
     def corrected(self):
         return K.corrected_now(self.cfg['clock_file'], host_now=self.clock())
@@ -228,7 +247,7 @@ class Filler:
         if book is None:
             return 'no_book'   # not this filler's seat: left alone, not recorded
         detail = json.loads(req['detail_json'] or '{}')
-        pol = pol_of(self.policy, detail.get('rails') or {})
+        pol = pol_of(self.policies[book], detail.get('rails') or {})
         if now_host - req['at'] > pol['entry_timeout_s']:
             last = self.ledger.execute('SELECT reason FROM fill_attempts WHERE request_id=? ORDER BY id DESC LIMIT 1', (req['request_id'],)).fetchone()
             self.outcome(req, 'censored', last[0] if last else 'entry_timeout', now)
@@ -237,7 +256,7 @@ class Filler:
         if why:
             return self.defer(req, why, now)
         clip = pol['clip_usd']
-        quote = self.prices.read(req['mint'], req['pool'])
+        quote = self.quote(req['mint'], req['pool'], req['network_id'])
         if quote['state'] != 'known':
             return self.defer(req, quote['reason'], now)
         if not finite(quote['liquidity_usd']):
@@ -300,7 +319,7 @@ class Filler:
 
     def manage(self, row, now, now_host):
         pol = json.loads(row['policy_json'])
-        quote = self.prices.read(row['mint'], row['pool'])
+        quote = self.quote(row['mint'], row['pool'], row['network_id'])
         ev = quote['state'] == 'known' and exit_value(pol, row['qty'], quote)
         if not ev:
             reason = quote.get('reason') if quote['state'] != 'known' else 'liquidity_unknown'
@@ -336,11 +355,10 @@ class Filler:
         for req in reqs:
             if req['kind'] == 'exit':
                 self.take_exit_request(req, now)
-        every = self.cfg.get('mark_every_s', 15.)
         self.ledger.row_factory = sqlite3.Row
         try:
             for row in self.ledger.execute("SELECT * FROM orders WHERE state='open' ORDER BY filled_at").fetchall():
-                if row['exit_requested_at'] is None and now_host - self.last_mark.get(row['order_id'], -1e18) < every:
+                if row['exit_requested_at'] is None and now_host - self.last_mark.get(row['order_id'], -1e18) < self.mark_every.get(row['book_id'], 15.):
                     continue
                 self.last_mark[row['order_id']] = now_host
                 results.append(self.manage(row, now, now_host))

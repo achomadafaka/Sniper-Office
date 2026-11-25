@@ -180,3 +180,12 @@ def test_retention_drops_tickets_older_than_the_window_and_caps_the_row_count(ri
     assert feed.retain(NOW) == 1 and [r[0] for r in rows(feed.cfg['desk_db'])] == ['t1']
     put(2, 5), put(3, 5)
     assert feed.retain(NOW) == 1 and [r[0] for r in rows(feed.cfg['desk_db'])] == ['t2', 't3']      # the cap keeps the newest rows
+
+
+@pytest.mark.parametrize('m5,status,reason', [(dict(buys=None, sells=5), 'unknown', 'm5_txns_missing'), (dict(buys=5), 'unknown', 'm5_txns_missing'), (dict(buys=0, sells=0), 'unknown', 'chart_prints_lt_2'),
+                                              (dict(buys=0, sells=3), 'pass', 'age_and_activity_present')])
+def test_a_missing_m5_count_is_an_unknown_chart_never_zero_prints(m5, status, reason):
+    cfg = dict(F.DEFAULTS, min_prints_m5=2)
+    pair = dict(pairCreatedAt=(NOW - 600) * 1000, txns=dict(m5=m5), liquidity=dict(usd=1.), priceUsd='1', marketCap=1e5)
+    chart = F.market_checks(pair, NOW, cfg, NOW)['chart']
+    assert (chart['status'], chart['reason']) == (status, reason)

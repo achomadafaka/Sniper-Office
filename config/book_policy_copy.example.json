@@ -1,0 +1,23 @@
+{
+  "label": "j7-copy-pilot",
+  "evaluation": false,
+  "note": "Paper book of the J7 copy seat: a $1000 book, clips of $50, five at a time. Stops and take-profits are the seat's own, inside rail_bounds; the seat must state both on every order.",
+  "policy": {
+    "enabled": true,
+    "clip_usd": 50.0,
+    "rail_bounds": {"sl_pct": [3.0, 50.0], "tp_pct": [5.0, 400.0], "trail_pct": [3.0, 40.0]},
+    "max_concurrent": 5,
+    "daily_loss_usd": 150.0,
+    "fill_model_version": "desk-paper-v1",
+    "sl_pct": 15.0,
+    "tp_pct": 40.0,
+    "trail_pct": 0.0,
+    "catastrophe_pct": 60.0,
+    "max_hold_s": 7200.0,
+    "entry_timeout_s": 60.0,
+    "slippage_bps": 50.0,
+    "fee_bps": 100.0,
+    "max_impact_bps": 1000.0,
+    "mark_max_age_s": 30.0
+  }
+}

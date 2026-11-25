@@ -8,7 +8,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 from test_desk_plugin import NOW, desk, ticket, write_json  # noqa: E402
 
-from sniper_office.desk import filler as FL, wakes as WK  # noqa: E402
+from sniper_office.desk import copydesk as CD, filler as FL, wakes as WK  # noqa: E402
 
 
 class FakeSeat:
@@ -132,6 +132,6 @@ def test_a_stale_mark_or_a_quiet_position_raises_no_alert(tmp_path):
     assert WK.source(q, True) is None
 
 
-def test_registration_adds_one_wake_source(tmp_path):
+def test_registration_adds_the_desk_and_the_signal_wake_sources(tmp_path):
     from sniper_office import plugins as P
-    assert P.load(dict(plugins=['sniper_office.desk'])).wake_sources == [WK.source]
+    assert P.load(dict(plugins=['sniper_office.desk'])).wake_sources == [WK.source, CD.signal_wake]
