@@ -1,0 +1,9 @@
+# Refreshes the clock correction sample every seat, the filler and the page read. Install with office-clock.timer;
+# set the Python and the --out path, then: systemctl --user enable --now office-clock.timer
+[Unit]
+Description=Office clock correction sample
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 -m sniper_office.clock_refresh --out %h/.local/share/sniper-office/clock_offset.json
+Nice=19
