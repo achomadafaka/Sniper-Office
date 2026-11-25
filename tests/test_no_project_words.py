@@ -9,6 +9,8 @@ WORDS = ['meme' 'coin', 'wal' 'let', 'sol' 'ana', 'poly' 'market', 'pump' 'swap'
          r'\btra' r'ders?\b', r'\btra' r'ding\b', r'\bsco' r'uts?\b', r'\bjud' r'ges?\b', r'\bde' r'sk\b', 'near_' 'pass',
          'sni' r'per(?![-_ ]office)']
 CASED = [r'\b(?:Al' 'pha|Be' 'ta|Gam' 'ma|Del' 'ta|Eps' 'ilon|Ze' 'ta|Lam' 'bda)\b']    # the source project's crew names
+# The desk plug-in is the project that plugs in, shipped beside the runtime: its tool names and data are the domain. Only these paths are exempt; the runtime proper stays guarded.
+PLUGIN_PATHS = ('sniper_office/desk/', 'tests/desk/', 'docs/DESK.md')
 PATTERN = re.compile('(?i:' + '|'.join(WORDS) + ')|' + '|'.join(CASED))
 
 
@@ -19,7 +21,7 @@ def test_no_domain_or_project_words_in_tracked_or_new_files():
     for name in filter(None, listed):
         path = ROOT / name
         # Skipped: this file, which has to spell the words, and the two extraction records, which have to name the source.
-        if not path.is_file() or path == Path(__file__).resolve() or name in ('docs/DESIGN.md', 'docs/STAGE6.md'):
+        if not path.is_file() or path == Path(__file__).resolve() or name in ('docs/DESIGN.md', 'docs/STAGE6.md') or name.startswith(PLUGIN_PATHS):
             continue
         if PATTERN.search(name):
             hits.append(name)
@@ -29,3 +31,7 @@ def test_no_domain_or_project_words_in_tracked_or_new_files():
             if PATTERN.search(line):
                 hits.append('%s:%d: %s' % (name, number, line.strip()[:120]))
     assert not hits, '\n'.join(hits)
+
+
+def test_the_plugin_exemption_covers_only_the_plugin_paths():
+    assert PATTERN.search('sniper_office/desk/paper.py') and not any(n.startswith(PLUGIN_PATHS) for n in ('sniper_office/seat_tools.py', 'tests/test_plugins.py', 'docs/SETUP.md', 'sniper_office/deskx.py'))

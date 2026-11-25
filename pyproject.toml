@@ -15,7 +15,7 @@ seats = ["cryptography"]
 models = ["jsonschema", "referencing"]
 
 [tool.setuptools]
-packages = ["sniper_office", "sniper_office.tools"]
+packages.find.include = ["sniper_office*"]   # every sub-package, including the plug-in
 
 [tool.setuptools.package-data]
 sniper_office = ["ui_static/*"]
