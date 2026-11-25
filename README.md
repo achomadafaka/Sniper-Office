@@ -76,6 +76,20 @@ Seat runtime: long-running agent sessions in a sandbox. `docs/SETUP.md` is the h
 | `seat_child`, `codex_child`, `seat_forward` | What runs inside the sandbox for one wake of one seat. |
 | `claude_seat_auth`, `launcher_client` | Read-only credential snapshots; a token is never refreshed or written back. |
 
+One-shot model calls and organisation (stage 3). An alternative to seats: each model call is one disposable child
+process started by a launcher that owns the credentials.
+
+| Module | What it holds |
+|---|---|
+| `supervisor_main` | Entry point for the supervisor process: `python3 -m sniper_office.supervisor_main --runtime-factory yourmodule:build`. |
+| `models` | `call()`: one attempt, one typed result envelope (outcome, usage, served model, billing basis). No transport configured means refused. Needs `jsonschema`. |
+| `scheduler` | Bounded admission of model calls per provider. |
+| `launcher_main`, `child_launcher`, `launcher_runtime`, `launcher_bindings`, `launcher_client`, `supervisor_client` | A no-network launcher on a Unix socket. Only the pinned supervisor may ask it for a child; it checks caps, guard and clock first. |
+| `host_guard` | The two checks before any child: resource caps really applied, and a fresh "ready" from an outside guard file. |
+| `model_child`, `claude_compat`, `codex_cli` | What runs as the child: one Claude Agent SDK call or one Codex CLI call, no tools. |
+| `model_auth`, `host_auth`, `codex_auth` | Credential snapshots for a child; a rotated Codex token is written back only for the same account. |
+| `org`, `roster`, `shifts` | Seats from an org file, hire and fire with epochs, shift boundaries and handover notes. Examples in `config/`. |
+
 The seat runtime needs Linux, `bwrap`, systemd user units and a dedicated system user (default `office`). It also
 needs the `cryptography` package on the host, and `claude-agent-sdk` and `playwright` inside the published runtime.
 `tests/test_walls.py` and `tests/test_browse_security.py` run the real sandbox when that user and runtime exist and
@@ -129,13 +143,22 @@ A project that used the source package must set these in its config to get the o
   day-partitioned files or text truncation markers; a project that needs those replaces the tool.
 - Retention no longer touches project tables; `add_retention` adds rules. The page log is kept 90 days.
 - The entry point is `python3 -m sniper_office.seat_main`. The publish step always places this package in the release.
+- `models.call` had two built-in transports that imported project code. `models.TRANSPORTS` is empty; pass
+  `transport=` or fill it at start-up.
+- `org.expand` and `org.validate` knew three role names. The pod template is now a list of
+  `{role, per_pod, families, attribute, values}` and the limits use `role_minimums` and `role_families_required`.
+- `roster` lost evaluated epochs, nominee verification and the pilot seed; they return with evaluation.
+- The launcher checked a fixed control directory, unit file and library path. Set them with
+  `launcher_runtime.configure(...)`; unset means refused. Expected caps come from `office_caps` in the launcher config.
+- The Codex lock path has no default: `codex_cli.codex_slot(path=...)`.
 - Memory entries are excluded when they share a `source_keys` value with the candidate; the default keys are
   `subject`, `creator`, `minute`.
 
 ## Not included
 
-The one-shot model launcher, organisation and epoch management, evaluation and promotion, and the web UI. Those are
-later stages of the plan.
+Evaluation and promotion (including evaluated epochs and the one-use launcher policy that guards them), a watchdog
+that writes the guard file, service units for the supervisor and launcher, and the web UI. Those are later stages
+of the plan.
 
 Not yet proven: a full wake from this package on a real host (publish, sandbox, model call, tool call, mail). The
 parts are tested, and the sandbox tests run for real, but the end-to-end run has not been done.

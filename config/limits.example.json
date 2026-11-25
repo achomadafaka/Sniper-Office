@@ -1,0 +1,12 @@
+{
+  "version": "limits-example-1",
+  "org_size_ceiling": 24,
+  "fixed_seats": ["Risk", "Postmortem"],
+  "min_pods": 2,
+  "max_pods": 4,
+  "role_minimums": {"Reviewer": 3},
+  "role_families_required": {"Reviewer": ["claude", "gpt"]},
+  "head_forbidden_changes": ["evidence", "guards", "live_authority", "risk_floors", "scoring", "shift_schedule", "tool_contract", "tools"],
+  "material_changes": ["fire", "hire", "learning_rule", "memory_promotion", "model", "org", "persona", "prompt", "restaff", "shift_schedule", "strategy", "tool_contract"],
+  "immaterial_changes": ["chat_message", "agenda_update", "heartbeat", "memory_write_unpromoted"]
+}

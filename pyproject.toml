@@ -7,11 +7,12 @@ name = "sniper-office"
 version = "0.1.0"
 description = "Durable agent turns: store, supervisor lease, typed tool receipts, tickets, written work and memory."
 requires-python = ">=3.11"
-dependencies = []
+dependencies = []   # the durable core and the seat host need only the standard library
 
 [project.optional-dependencies]
-test = ["pytest", "cryptography"]
+test = ["pytest", "cryptography", "jsonschema", "referencing"]
 seats = ["cryptography"]
+models = ["jsonschema", "referencing"]
 
 [tool.setuptools]
 packages = ["sniper_office", "sniper_office.tools"]

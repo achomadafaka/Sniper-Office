@@ -1,0 +1,13 @@
+{
+  "version": "org-example-1",
+  "shared_seats": [
+    {"role": "Head", "count": 1, "family": "claude", "tier": "large"},
+    {"role": "Risk", "count": 1, "family": "mixed"},
+    {"role": "Postmortem", "count": 1, "family": "mixed"}
+  ],
+  "pod_template": {"seats": [
+    {"role": "Researcher", "per_pod": 2, "families": ["claude", "gpt"], "attribute": "lane", "values": ["news", "filings", "forums", "data"]},
+    {"role": "Reviewer", "per_pod": 3, "families": ["claude", "gpt"]}
+  ]},
+  "pods": 2
+}
