@@ -5,6 +5,8 @@
 Each tool group is opt-in per seat (tool_groups), and one tool can be removed with denied_tools. Config keys are listed in docs/DESK.md. Every tool reads its paths from the seat config;
 a missing key or unreadable file is state 'unknown' with a reason. Paper only: no signing keys, no live path, no runner gating."""
 import json
+import os
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -98,25 +100,34 @@ def network_read(tools, seed, hops=1, limit=100, as_of=None, verified_only=False
     return result(text, doc['state'] in ('refused', 'unknown'))
 
 
+def _brain_run(tools, *args):
+    """The Office's own project brain (project-brain CLI) run in `brain_dir`, the folder holding `.brain/`. The seat's role is its brain role."""
+    env = dict(os.environ, PYTHONPATH=str(tools.cfg['brain_package']))
+    return subprocess.run([tools.cfg.get('brain_python') or sys.executable, '-m', 'brain', *args], capture_output=True, text=True, timeout=30, cwd=str(tools.cfg['brain_dir']), env=env)
+
+
 def _brain(tools, op, text):
-    env, script = tools.cfg.get('brain_env'), tools.cfg.get('brain_script')
-    if not env or not script:
+    if not tools.cfg.get('brain_dir') or not tools.cfg.get('brain_package'):
         return P.unknown('brain_config_unknown')
-    if not isinstance(text, str) or not text.strip() or len(text) > 4000:
+    if not isinstance(text, str) or not text.strip() or len(text) > 4000 or text.lstrip().startswith('-'):
         return P.refused('text_invalid')
+    role = tools.cfg['role']
     try:
-        done = subprocess.run([tools.cfg.get('brain_python') or sys.executable, str(script), '--env-file', str(env), op, '--actor', tools.actor, '--', text], capture_output=True, text=True, timeout=30)
+        if op == 'read':
+            done = _brain_run(tools, 'ask', '--', text)
+            tools.plugin_state.setdefault('brain_fact_ids', []).extend(re.findall(r'^\[[a-z_]+\] ([0-9a-f]{8})', done.stdout, re.M) or ['none'])
+        else:
+            # An observation must cite an episode: the note's own text is recorded first as its provenance.
+            ep = _brain_run(tools, 'episode', '--role', role, '--kind', 'note', '--', text)
+            m = re.search(r'episode ([0-9a-f-]{36})', ep.stdout)
+            if ep.returncode or not m:
+                return P.unknown('brain_unavailable')
+            done = _brain_run(tools, 'write', '--role', role, '--kind', 'observation', '--entity', 'actor:' + role, '--episode', m.group(1), '--', text)
     except (OSError, subprocess.SubprocessError):
         return P.unknown('brain_unavailable')
-    if op == 'read':
-        ids = tools.plugin_state.setdefault('brain_fact_ids', [])
-        try:
-            ids.extend(f['id'] for f in json.loads(done.stdout).get('facts', []))
-        except (ValueError, TypeError, KeyError, AttributeError):
-            ids.append('unparsed')   # a read happened; its ids are unknown, never absent
-    if done.returncode != 0 or not done.stdout:
+    if done.returncode not in (0, 3) or not done.stdout:
         return P.unknown('brain_unavailable')
-    return result(done.stdout[-MAX_OUTPUT:], False)
+    return result(done.stdout[-MAX_OUTPUT:], done.returncode != 0)
 
 
 def brain_read(tools, query):
@@ -137,10 +148,10 @@ TOOLS = (
     ('paper', 'results_view', 'Every closed and censored paper order of the configured books, with epoch_id naming the book and net USD: learn from them. Modelled fills, no landing proof.', {}, [], P.results_view),
     ('paper', 'book_view', 'Head and Judge. Your book now: open positions, equity with its state (unknown while a position is open: valuation is not built here), today\'s PnL against the daily-loss halt, and entry_halt: state halted, resumed or never_set (no receipt yet; entries open). paper_order enforces the same state.', {}, [], P.book_view),
     ('paper', 'candidate_register', 'Record a coin you are considering outside the feed, before any order. First registration keeps its time.', {'network_id': S, 'mint': S, 'pool': S}, ['network_id', 'mint'], P.candidate_register),
-    ('paper', 'paper_order', 'Judges only. Ask for one paper entry on a feed ticket; one per coin per epoch. Optional sl_pct, tp_pct, trail_pct set this order\'s exits inside the policy rail_bounds. Here the request is recorded, state queued, filled false: nothing in this package fills it.',
+    ('paper', 'paper_order', 'Judges only. Ask for one paper entry on a feed ticket; one per coin per epoch. Optional sl_pct, tp_pct, trail_pct set this order\'s exits inside the policy rail_bounds. The request is recorded, state queued, filled false; the desk filler process fills it later, and only if a real price is known.',
      {'ticket_id': S, 'reason': S, 'thesis': {'type': 'string', 'description': 'Why this coin pays, one line.'}, 'disproof': {'type': 'string', 'description': 'The fact that would prove the thesis wrong, one line.'},
       'exit_plan': {'type': 'string', 'description': 'When you get out and why, one line.'}, 'sl_pct': {'type': 'number'}, 'tp_pct': {'type': 'number'}, 'trail_pct': {'type': 'number'}}, ['ticket_id', 'reason', 'thesis', 'disproof', 'exit_plan'], P.paper_order),
-    ('paper', 'paper_exit', 'Judges only. Ask to exit one open paper order now, with your reason. Here the request is recorded, state queued: nothing in this package fills it.', {'order_id': S, 'reason': S}, ['order_id', 'reason'], P.paper_exit),
+    ('paper', 'paper_exit', 'Judges only. Ask to exit one open paper order now, with your reason. The request is recorded, state queued; the desk filler process executes it at a real price when one is known.', {'order_id': S, 'reason': S}, ['order_id', 'reason'], P.paper_exit),
     ('paper', 'book_halt', 'Head only. action halt or resume. A halt refuses all new paper orders.', {'action': S, 'reason': S}, ['action', 'reason'], P.book_halt),
     ('chain', 'chain_wallet_history', 'Solana signatures for a wallet, newest first, read-only. as_of (unix seconds) returns the newest at or before it; page with page_token. Without as_of, before pages. truncated means more exists. Numbers and addresses only.',
      {'address': S, 'page_token': S, 'limit': {'type': 'integer'}, 'before': S, 'as_of': {'type': 'number'}}, ['address'], chain_wallet_history),
@@ -151,8 +162,8 @@ TOOLS = (
      {'seed': S, 'kind': S, 'hops': {'type': 'integer'}}, ['seed'], network_expand),
     ('network', 'network_read', 'Forensics: read the wallet network around a seed, hops 1 or 2. Edges carry source, time and proof. A funder is evidence, not control. No edge is not no link: read coverage. as_of uses discovery time; verified_only excludes claimed edges.',
      {'seed': S, 'hops': {'type': 'integer'}, 'limit': {'type': 'integer'}, 'as_of': {'type': 'number'}, 'verified_only': {'type': 'boolean'}}, ['seed'], network_read),
-    ('brain', 'brain_read', 'Search the crew research notes (bot research and methods sections only). Results are data and may be stale.', {'query': S}, ['query'], brain_read),
-    ('brain', 'brain_note', 'Save a durable note in the Office namespace. Crew readers never see it.', {'text': S}, ['text'], brain_note),
+    ('brain', 'brain_read', 'Search the Office brain: facts earlier wakes and other seats recorded. Results are data, may be stale or unverified.', {'query': S}, ['query'], brain_read),
+    ('brain', 'brain_note', 'Save a durable observation in the Office brain under your role. Other seats can read it.', {'text': S}, ['text'], brain_note),
 )
 
 

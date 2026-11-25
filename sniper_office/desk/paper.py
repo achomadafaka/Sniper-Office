@@ -1,8 +1,7 @@
 """Paper-book tools for the desk plug-in. Read-only on the source project's ledger and desk files; every write goes to the seat's own office db (tables desk_*).
 
-Nothing here can sign, fund or reach a live path. Missing config or data is state 'unknown' with a reason, never a default. What the standalone cannot rebuild is said in the result:
-the full sheet builder and the fill engine live in the source project, so sheet_read shows the stored hard-filter evidence (state partial) and paper_order/paper_exit record
-a request (state queued, filled false) for whatever fills paper orders to pick up. Nothing in this package fills them."""
+Nothing here can sign, fund or reach a live path. Missing config or data is state 'unknown' with a reason, never a default. The full sheet builder lives in the source project, so sheet_read
+shows the stored hard-filter evidence (state partial). paper_order/paper_exit record a request (state queued, filled false); desk/filler.py (a host process) fills them in the Office ledger."""
 from contextlib import closing
 from datetime import datetime
 import hashlib
@@ -283,16 +282,25 @@ def book_view(tools):
             conn.row_factory = sqlite3.Row
             rows = conn.execute("SELECT order_id,mint,pool,state,filled_at,spend_usd FROM orders WHERE book_id=? AND state IN ('pending','open') ORDER BY requested_at,order_id LIMIT 100", (book,)).fetchall()
             positions = []
+            valued = 'value_usd' in {c[1] for c in conn.execute('PRAGMA table_info(marks)')}   # the Office ledger prices marks in USD; the source project's ledger does not
             for r in rows:
-                mark = conn.execute('SELECT at,lamports FROM marks WHERE order_id=? AND at<=? ORDER BY at DESC LIMIT 1', (r['order_id'], now)).fetchone()
-                positions.append(dict(r, mark_at=mark['at'] if mark else None, mark_age_s=now - mark['at'] if mark else None, mark_lamports=mark['lamports'] if mark else None))
+                mark = conn.execute('SELECT at,lamports%s FROM marks WHERE order_id=? AND at<=? ORDER BY at DESC LIMIT 1' % (',value_usd,price_usd' if valued else ''), (r['order_id'], now)).fetchone()
+                positions.append(dict(r, mark_at=mark['at'] if mark else None, mark_age_s=now - mark['at'] if mark else None, mark_lamports=mark['lamports'] if mark else None,
+                                      mark_price_usd=mark['price_usd'] if mark and valued else None, mark_value_usd=mark['value_usd'] if mark and valued else None))
             cash = conn.execute('SELECT COALESCE(SUM(usd),0) FROM capital_flows WHERE book_id=? AND at<=?', (book, now)).fetchone()[0] \
                 + conn.execute('SELECT COALESCE(SUM(c.usd),0) FROM cashflows c JOIN orders o USING(order_id) WHERE o.book_id=? AND c.at<=?', (book, now)).fetchone()[0]
             realized = conn.execute("SELECT COALESCE(SUM(c.usd),0) FROM cashflows c JOIN orders o USING(order_id) WHERE o.book_id=? AND o.state='closed' AND o.closed_at>=?", (book, now - now % 86400)).fetchone()[0]
     except (OSError, sqlite3.Error):
         return unknown('ledger_unreadable')
-    # Open inventory needs the fill model's FX and exit cost to value; those are not rebuilt here, so equity is exact only for a flat book.
-    equity = dict(state='known', usd=cash, cash_usd=cash, unpriced_count=0) if not positions else dict(state='unknown', reason='valuation_not_built_here', usd=None, cash_usd=cash, unpriced_count=len(positions))
+    # An open position is valued at its newest mark's modelled net exit value (after exit slippage and fee). No fresh priced mark => that position is unpriced and equity is unknown.
+    max_age = (policy.get('mark_max_age_s') if isinstance(policy.get('mark_max_age_s'), (int, float)) else 120.)
+    unpriced = [p for p in positions if p['mark_value_usd'] is None or p['mark_age_s'] is None or p['mark_age_s'] > max_age]
+    if not positions:
+        equity = dict(state='known', usd=cash, cash_usd=cash, unpriced_count=0)
+    elif unpriced:
+        equity = dict(state='unknown', reason='position_unpriced', usd=None, cash_usd=cash, unpriced_count=len(unpriced))
+    else:
+        equity = dict(state='known', usd=cash + sum(p['mark_value_usd'] for p in positions), cash_usd=cash, unpriced_count=0, valuation='modelled_net_exit_value')
     with closing(own(tools)) as conn:
         halt = entry_halt(conn, tools.epoch)
     doc = dict(book_id=book, as_of=now, positions=positions, positions_over_cap=cap is not None and len(positions) > cap, equity=equity, daily_realized_usd=realized,
@@ -342,7 +350,7 @@ def _queued(tools, kind, **fields):
     return request_id
 
 
-NOT_FILLED = 'recorded as a paper request only: nothing in this package fills paper orders, so there is no fill, no position and no result until a fill engine reads desk_paper_requests'
+NOT_FILLED = 'recorded as a paper request only: there is no fill, position or result until the desk filler process (python3 -m sniper_office.desk.filler) picks it up; it may never fill if the price is unknown'
 
 
 def paper_order(tools, ticket_id, reason, thesis=None, disproof=None, exit_plan=None, sl_pct=None, tp_pct=None, trail_pct=None):

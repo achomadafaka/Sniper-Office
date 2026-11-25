@@ -1,0 +1,12 @@
+{
+  "office_db": "/path/to/office.db",
+  "ledger_db": "/path/to/sniper-office/ledger.db",
+  "book_policy": "/path/to/book_policy.json",
+  "clock_file": "/path/to/clock_offset.json",
+  "books": [
+    {"book_id": "office-v2-explore-1", "actor_ids": ["ag_judge_actor_id"], "capital_usd": 1000.0},
+    {"book_id": "office-v2-explore-gpt-1", "actor_ids": ["ag_judge_gpt_actor_id"], "capital_usd": 1000.0}
+  ],
+  "tick_s": 5,
+  "mark_every_s": 15
+}

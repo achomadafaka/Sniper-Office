@@ -1,0 +1,27 @@
+# The desk paper fill engine: one host process for the Office ledger. Paper only: no key, no signing, no chain write.
+# Install: copy to ~/.config/systemd/user/, set the two paths below, then
+#   systemctl --user enable --now office-paper-filler
+# Config: see config/paper_filler.example.json. Only one filler can hold a ledger (flock on <ledger_db>.lock).
+[Unit]
+Description=Office desk paper fill engine
+After=network-online.target
+
+[Service]
+Type=simple
+Environment=PYTHONUNBUFFERED=1
+# Path of the Python that has sniper_office installed, and of the filler config.
+ExecStart=/usr/bin/python3 -m sniper_office.desk.filler --config /etc/myproject/paper_filler.json
+Restart=on-failure
+RestartSec=30
+Nice=10
+MemoryMax=256M
+CPUQuota=50%
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+# The ledger directory and the office db directory (WAL files are created beside each).
+ReadWritePaths=%h/.local/share/sniper-office
+PrivateTmp=yes
+
+[Install]
+WantedBy=default.target
