@@ -56,6 +56,26 @@ python3 -m pytest
 | `launcher_diagnostics` | Redaction of credentials from captured child output. |
 | `config` | Loads one JSON file, optionally pinned by SHA-256, and applies it to the modules above. |
 
+Seat runtime parts (stage 2a). These are the building blocks for long-running agent sessions in a sandbox; the
+seat host and tool server that tie them together are not here yet.
+
+| Module | What it holds |
+|---|---|
+| `seat_sandbox` | `bwrap` and `systemd-run` arguments: one sandbox that holds the model credential and no tools, one that holds tools and no credential. Neither has a network route out. |
+| `egress_proxy`, `netguard` | Host-side proxy on a Unix socket: public addresses only, pinned IPs, a host denylist, per-host rate limits. |
+| `model_proxy` | Host-side proxy for a model provider; the sandbox holds a placeholder token and the real one stays on the host. |
+| `search_broker`, `seat_search`, `seat_browse`, `tools/browse` | Web search and page reads through the proxy, with a shared cache and daily budget. |
+| `seat_events` | Seat mailbox, roster and event log. |
+| `quota_measurement`, `quota_read` | Token usage per account and seat. |
+| `seat_retention` | Bounded deletes for every table and log the seat runtime writes. |
+| `seat_child`, `codex_child`, `seat_forward` | What runs inside the sandbox for one wake of one seat. |
+| `claude_seat_auth`, `launcher_client` | Read-only credential snapshots; a token is never refreshed or written back. |
+
+The seat runtime needs Linux, `bwrap`, systemd user units and a dedicated system user (default `office`). It also
+needs the `cryptography` package on the host, and `claude-agent-sdk` and `playwright` inside the published runtime.
+`tests/test_walls.py` and `tests/test_browse_security.py` run the real sandbox when that user and runtime exist and
+skip otherwise.
+
 ## Configuration
 
 Nothing project-specific is in the code. One JSON file names the roles, which tools each role may call, and any
@@ -77,6 +97,8 @@ conn = store.open_store('data/office.db')
 | `tickets` | `crew_ids`, `approver_role`, `queue_roles` | nobody can acknowledge a ticket |
 | `handoff_kinds` | `[reference kind, receiving role, event kind]` triples | `<reference kind>_response` |
 | `tables` | `append_only`, `private`, `columns`, `indexes` | the built-in tables only |
+| `crew_roles` | who may mail seats as `crew:<role>` | nobody |
+| `host` | `bridge`, `home`, `user` for the sandbox | `/srv/sniper-office`, `/var/lib/sniper-office`, `office` |
 
 The file is trusted input: column definitions and index statements in `tables` run as SQL. An unknown key is
 refused. With `expected_sha256` given, a changed file is refused and nothing is applied.
@@ -99,5 +121,6 @@ A project that used the source package must set these in its config to get the o
 
 ## Not included
 
-Sandboxes and long-running agent sessions, model transports and credentials, token budgets, organisation and
-epoch management, evaluation and promotion, any web UI, any service unit. Those are later stages of the plan.
+The seat host and tool server (with the plug-in loader), the read-only database tool, the publish step, service
+units, the one-shot model launcher, organisation and epoch management, evaluation and promotion, and the web UI.
+Those are later stages of the plan.

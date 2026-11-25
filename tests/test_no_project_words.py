@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 WORDS = ['meme' 'coin', 'wal' 'let', 'sol' 'ana', 'poly' 'market', 'pump' 'swap', 'pump' r'\.fun', r'\bmi' r'nts?\b', r'\bco' r'ins?\b',
          r'\btra' r'ders?\b', r'\btra' r'ding\b', r'\bsco' r'uts?\b', r'\bjud' r'ges?\b', r'\bde' r'sk\b', 'near_' 'pass',
          'sni' r'per(?![-_ ]office)']
-CASED = [r'\b(?:Al' 'pha|Be' 'ta|Gam' 'ma|Del' 'ta|Eps' 'ilon|Ze' 'ta|Lam' 'bda|Co' r'dex)\b']    # the source project's crew names
+CASED = [r'\b(?:Al' 'pha|Be' 'ta|Gam' 'ma|Del' 'ta|Eps' 'ilon|Ze' 'ta|Lam' 'bda)\b']    # the source project's crew names
 PATTERN = re.compile('(?i:' + '|'.join(WORDS) + ')|' + '|'.join(CASED))
 
 

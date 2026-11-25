@@ -1,0 +1,3 @@
+{"schema":"office-v2-egress-denylist-v1",
+ "domains":["vendor.test","billing.example"],
+ "read_only_host_exceptions":["docs.vendor.test"]}

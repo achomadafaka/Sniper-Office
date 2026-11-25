@@ -11,13 +11,15 @@ Keys (all optional; a missing key leaves that module's fail-closed default):
   tickets            {crew_ids, approver_role, queue_roles}
   handoff_kinds      [[reference kind, receiving role, event kind], ...]
   tables             {append_only, private, columns, indexes}   store.extend_schema
+  crew_roles         [role, ...]                  who may mail seats as 'crew:<role>' (seat_events)
+  host               {bridge, home, user}         sandbox host layout (seat_sandbox)
 """
 import hashlib
 import json
 
-from . import capabilities, memory, runtime_observations, store, supervisor, tickets
+from . import capabilities, memory, runtime_observations, seat_events, seat_sandbox, store, supervisor, tickets
 
-KEYS = frozenset({'roles', 'cut_free_tools', 'role_aliases', 'deferrable_reasons', 'memory', 'tickets', 'handoff_kinds', 'tables'})
+KEYS = frozenset({'roles', 'cut_free_tools', 'role_aliases', 'deferrable_reasons', 'memory', 'tickets', 'handoff_kinds', 'tables', 'crew_roles', 'host'})
 
 
 class ConfigMismatch(Exception):
@@ -45,6 +47,10 @@ def apply(cfg):
         runtime_observations.HANDOFF_KINDS.update({(a, b): c for a, b, c in kinds})
     if 'tables' in cfg:
         store.extend_schema(**cfg['tables'])
+    if 'crew_roles' in cfg:
+        seat_events.configure(crew_roles=cfg['crew_roles'])
+    if 'host' in cfg:
+        seat_sandbox.configure(**cfg['host'])
     return cfg
 
 
