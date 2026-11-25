@@ -33,16 +33,31 @@ def _pair(client,upstream):
     for a,b in ((client,upstream),(upstream,client)):threading.Thread(target=_copy,args=(a,b,done),daemon=True).start()
 
 
+LOG='/opt/workspace/tmp/forward.log'
+
+
+def _note(text):
+    try:
+        with open(LOG,'a') as f:f.write('%.3f %s\n'%(time.time(),text))
+    except OSError:pass
+
+
 def _serve(path,listener):
+    """Never exits: a dead accept thread fails every later model call while the listener still looks open (2026-11-25)."""
     while True:
-        try:client,_=listener.accept()
-        except OSError:
-            time.sleep(0.2);continue   # e.g. EMFILE: wait for fds to free up, never let the forwarder die
-        upstream=socket.socket(socket.AF_UNIX)
-        try:upstream.connect(path)
-        except OSError:
-            client.close();upstream.close();continue
-        _pair(client,upstream)
+        client=upstream=None
+        try:
+            client,_=listener.accept()
+            upstream=socket.socket(socket.AF_UNIX)
+            upstream.connect(path)
+            _pair(client,upstream)
+        except BaseException as exc:   # noqa: BLE001 - any error here must not end the forwarder
+            _note('forward_error %s %s'%(type(exc).__name__,exc))
+            for sock in (client,upstream):
+                if sock is not None:
+                    try:sock.close()
+                    except OSError:pass
+            time.sleep(0.2)
 
 
 def start(path='/opt/proxy.sock'):
