@@ -1,0 +1,19 @@
+{
+  "plugins": [
+    "sniper_office.services"
+  ],
+  "tool_groups": [
+    "wallets",
+    "creator",
+    "narrative"
+  ],
+  "wallet_db": "%h/.local/share/sniper-office/wallets.db",
+  "wallet_cache_s": 21600,
+  "creator_state": {
+    "collect": "%h/.local/share/sniper-office/creator/collect",
+    "venue": "%h/.local/share/sniper-office/creator/venue"
+  },
+  "narrative_db": "%h/.local/share/sniper-office/narrative.db",
+  "x_db": "%h/.local/share/sniper-office/x.db",
+  "clock_file": "%h/.local/share/sniper-office/clock_offset.json"
+}

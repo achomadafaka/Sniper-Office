@@ -1,0 +1,9 @@
+{
+  "x_db": "%h/.local/share/sniper-office/x.db",
+  "clock_file": "%h/.local/share/sniper-office/clock_offset.json",
+  "env_file": "%h/.config/sniper-office/x.env",
+  "token_key": "X_RECEIVER_TOKEN",
+  "host": "127.0.0.1",
+  "port": 8765,
+  "handles": []
+}

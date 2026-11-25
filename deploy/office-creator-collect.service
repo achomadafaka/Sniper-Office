@@ -1,0 +1,26 @@
+# Office BSC creator launch collector (research, public RPC reads). Host process, not a seat.
+# Install: copy to ~/.config/systemd/user/, set the Python and config paths below, then
+#   systemctl --user enable --now office-creator-collect
+# Config: see config/creator_collect.example.json. Docs: docs/SERVICES.md
+[Unit]
+Description=Office BSC creator launch collector (research, public RPC reads)
+After=network-online.target
+
+[Service]
+Type=simple
+Environment=PYTHONUNBUFFERED=1
+# Path of the Python that has sniper_office installed, and of the config.
+ExecStart=/usr/bin/python3 -m sniper_office.services.creator.main --config /etc/myproject/creator_collect.json collect
+Restart=on-failure
+RestartSec=30
+Nice=10
+MemoryMax=256M
+CPUQuota=50%
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.local/share/sniper-office/creator
+PrivateTmp=yes
+
+[Install]
+WantedBy=default.target

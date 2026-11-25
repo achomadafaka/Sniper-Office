@@ -1,0 +1,13 @@
+{
+  "guard_file": "%h/.local/share/sniper-office/guard/guard.json",
+  "heartbeat_files": [
+    "%h/.local/share/sniper-office/heartbeat/seat_head.json"
+  ],
+  "psi_max": 0.2,
+  "mem_min_bytes": 4294967296,
+  "heartbeat_max_age_s": 30,
+  "resume_after_s": 900,
+  "interval_s": 1,
+  "office_cgroup": null,
+  "kill_file": null
+}

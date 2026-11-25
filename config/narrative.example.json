@@ -1,0 +1,11 @@
+{
+  "narrative_db": "%h/.local/share/sniper-office/narrative.db",
+  "clock_file": "%h/.local/share/sniper-office/clock_offset.json",
+  "interval_s": 30,
+  "launch_sources": [
+    {
+      "kind": "geckoterminal",
+      "network": "solana"
+    }
+  ]
+}

@@ -1,0 +1,27 @@
+# Office host health watchdog (writes the guard file the supervisor and launcher read). Host process, not a seat.
+# The optional kill_file (an office.slice cgroup.kill) needs write access to it: add it to ReadWritePaths only if you enable it.
+# Install: copy to ~/.config/systemd/user/, set the Python and config paths below, then
+#   systemctl --user enable --now office-host-watchdog
+# Config: see config/host_watchdog.example.json. Docs: docs/SERVICES.md
+[Unit]
+Description=Office host health watchdog (writes the guard file the supervisor and launcher read)
+After=network-online.target
+
+[Service]
+Type=simple
+Environment=PYTHONUNBUFFERED=1
+# Path of the Python that has sniper_office installed, and of the config.
+ExecStart=/usr/bin/python3 -m sniper_office.services.host_watchdog --config /etc/myproject/host_watchdog.json
+Restart=on-failure
+RestartSec=30
+Nice=10
+MemoryMax=64M
+CPUQuota=10%
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.local/share/sniper-office/guard
+PrivateTmp=yes
+
+[Install]
+WantedBy=default.target

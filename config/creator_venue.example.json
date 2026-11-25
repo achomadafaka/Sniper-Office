@@ -1,0 +1,15 @@
+{
+  "env_file": "%h/.config/sniper-office/creator.env",
+  "rpc_url_env": "CREATOR_VENUE_RPC_URL",
+  "other_env_files": [
+    "%h/.config/sniper-office/research.env"
+  ],
+  "state_dir": "%h/.local/share/sniper-office/creator/venue",
+  "other_state_dirs": [
+    "%h/.local/share/sniper-office/creator/collect"
+  ],
+  "anchor": "%h/.local/share/sniper-office/creator/anchor.json",
+  "subject": "0x44a8e81138364637cf8404953f1fd34fbf53696f",
+  "primary_checkpoint": "%h/.local/share/sniper-office/creator/collect/checkpoint.json",
+  "clock_file": "%h/.local/share/sniper-office/clock_offset.json"
+}

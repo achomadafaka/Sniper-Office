@@ -1,0 +1,12 @@
+{
+  "env_file": "%h/.config/sniper-office/creator.env",
+  "rpc_url_env": "CREATOR_RESEARCH_RPC_URL",
+  "other_env_files": [
+    "%h/.config/sniper-office/research.env"
+  ],
+  "state_dir": "%h/.local/share/sniper-office/creator/collect",
+  "anchor": "%h/.local/share/sniper-office/creator/anchor.json",
+  "seed": "%h/.local/share/sniper-office/creator/seed_capture.json",
+  "clock_file": "%h/.local/share/sniper-office/clock_offset.json",
+  "quote_input_atomic": "1000000000000000"
+}
