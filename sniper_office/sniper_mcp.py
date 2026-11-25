@@ -5,6 +5,7 @@ environment, no credentials; the Supabase entry and its token are never read); n
 does not name are never exposed. Only tools that work on local files or SQLite are allowlisted, and the server runs in a network-less namespace (bwrap --unshare-net), so no remote database
 (Supabase or other) can be reached whatever the tool does; without bwrap nothing is launched. Each call runs a short-lived server process, so a hung server cannot outlive its timeout. Results are bounded and marked as data."""
 import json
+import re
 import logging
 import os
 import queue
@@ -33,6 +34,20 @@ class McpError(Exception):
     pass
 
 
+SECRET = re.compile(r'(^\.env.*|.*\.env|.*\.(pem|key|p12|pfx)|.*keypair.*|.*credentials.*|.*secret.*|.*token.*\.json|\.mcp\.json)$', re.I)
+SKIP_DIRS = {'.git', 'node_modules', '.venv', '__pycache__'}
+
+
+def secret_files(root):
+    """Every credential-looking file under the project, masked inside the server's sandbox. Scanned on each launch, so a new file is covered."""
+    for base, dirs, files in os.walk(root):
+        dirs[:] = [d for d in dirs if d not in SKIP_DIRS and not os.path.islink(os.path.join(base, d))]
+        for name in files:
+            full = os.path.join(base, name)
+            if SECRET.match(name) and os.path.isfile(full) and not os.path.islink(full):
+                yield full
+
+
 def launch_spec(cfg):
     """(argv, cwd) for the 'sniper' entry of the .mcp.json, or raises McpError."""
     try:
@@ -45,20 +60,18 @@ def launch_spec(cfg):
     if bwrap is None:
         raise McpError('no_net_isolation')   # fail closed: without a network cut a remote-database tool could not be ruled out
     root, py = path.parent, Path(argv[0]).resolve()
-    # Read-only everything; home, /run and /tmp masked, then only the source project and the interpreter's install bound back read-only.
-    # Its env files are masked, the server gets a scratch tmpfs, no network, no capabilities, its own namespaces.
+    home = Path.home().resolve()
+    # Read-only everything; home, /run and /tmp masked, then only the source project and the interpreter's own prefix bound back read-only.
     walls = [bwrap, '--ro-bind', '/', '/', '--dev', '/dev', '--proc', '/proc', '--tmpfs', '/home', '--tmpfs', '/run', '--tmpfs', '/tmp',
              '--ro-bind', str(root), str(root)]
-    for parent in py.parents:
-        if parent.name.startswith('versions') or (parent / 'bin').is_dir() and parent != Path('/') and str(parent).startswith(str(Path.home())):
-            walls += ['--ro-bind', str(parent), str(parent)]
-            break
-    user_site = Path.home() / '.local' / 'lib'   # the interpreter's user site-packages (the server's dependencies live there), read-only
+    prefix = py.parent.parent                       # <prefix>/bin/python3 -> <prefix>; never home itself or a direct child of it
+    if prefix.is_relative_to(home) and prefix != home and prefix.parent != home:
+        walls += ['--ro-bind', str(prefix), str(prefix)]
+    user_site = home / '.local' / 'lib'             # the interpreter's user site-packages (the server's dependencies live there)
     if user_site.is_dir():
         walls += ['--ro-bind', str(user_site), str(user_site)]
-    for secret in sorted(root.glob('.*env')) + [root / '.mcp.json']:
-        if secret.is_file():
-            walls += ['--ro-bind', '/dev/null', str(secret)]
+    for secret in secret_files(root):
+        walls += ['--ro-bind', '/dev/null', str(secret)]
     walls += ['--unshare-all', '--cap-drop', 'ALL', '--die-with-parent', '--new-session']
     return walls + argv, str(root)
 
