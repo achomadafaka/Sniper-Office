@@ -34,18 +34,28 @@ class McpError(Exception):
     pass
 
 
-SECRET = re.compile(r'(^\.env.*|.*\.env|.*\.(pem|key|p12|pfx)|.*keypair.*|.*credentials.*|.*secret.*|.*token.*\.json|\.mcp\.json)$', re.I)
-SKIP_DIRS = {'.git', 'node_modules', '.venv', '__pycache__'}
+SECRET = re.compile(r'(\..*env|\.env.*|.*\.env(\..*)?|.*\.(pem|key|p12|pfx|kdbx|gpg|asc)|.*keypair.*|.*credential.*|.*secret.*|.*token.*|.*password.*|'
+                    r'id_(rsa|dsa|ecdsa|ed25519).*|\.netrc|\.pgpass|\.npmrc|\.pypirc|\.mcp\.json|.*wallet.*\.json)$', re.I)
+SKIP_DIRS = {'.git', 'node_modules', '__pycache__'}
+CODE = re.compile(r'.*\.(py|pyc|md|sh|css|js|ts|html|example|lock|txt)$', re.I)   # source and docs named after secrets are code the server imports, not secrets
 
 
 def secret_files(root):
-    """Every credential-looking file under the project, masked inside the server's sandbox. Scanned on each launch, so a new file is covered."""
-    for base, dirs, files in os.walk(root):
-        dirs[:] = [d for d in dirs if d not in SKIP_DIRS and not os.path.islink(os.path.join(base, d))]
-        for name in files:
-            full = os.path.join(base, name)
-            if SECRET.match(name) and os.path.isfile(full) and not os.path.islink(full):
-                yield full
+    """Every credential-looking file under the project, masked inside the server's sandbox, scanned on each launch. A matching symlink is masked
+    at its own path and at its real target when that lies inside the project (targets outside are not mounted at all: home is a tmpfs)."""
+    root = Path(root).resolve()
+    out = set()
+    for base, dirs, files in os.walk(root):          # symlinked dirs are not followed: their targets inside the project are walked at their real path
+        dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
+        for name in files + [d for d in dirs if os.path.islink(os.path.join(base, d))]:
+            full = Path(base, name)
+            if not SECRET.match(name) or (CODE.match(name) and not name.lower().startswith('.env')):
+                continue
+            out.add(str(full))
+            real = full.resolve()
+            if real != full and real.is_relative_to(root) and real.exists():
+                out.add(str(real))
+    return sorted(out)
 
 
 def launch_spec(cfg):
@@ -71,7 +81,7 @@ def launch_spec(cfg):
     if user_site.is_dir():
         walls += ['--ro-bind', str(user_site), str(user_site)]
     for secret in secret_files(root):
-        walls += ['--ro-bind', '/dev/null', str(secret)]
+        walls += (['--tmpfs', secret] if os.path.isdir(secret) else ['--ro-bind', '/dev/null', secret])
     walls += ['--unshare-all', '--cap-drop', 'ALL', '--die-with-parent', '--new-session']
     return walls + argv, str(root)
 
