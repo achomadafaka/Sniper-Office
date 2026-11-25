@@ -197,5 +197,6 @@ A watchdog that writes the guard file, service units for the supervisor and laun
 auditor that pins chain heads outside the database, the optional bootstrap and calibration statistics, and the web
 UI.
 
-Not yet proven: a full wake from this package on a real host (publish, sandbox, model call, tool call, mail). The
-parts are tested, and the sandbox tests run for real, but the end-to-end run has not been done.
+Proven on one host (2026-11-25): a full wake from this package alone, on a separate test bridge: publish, sandbox, a real
+model call, tool calls, mail, usage counted. The walls were tested from inside the sandbox. `docs/DESIGN.md` section 7 has
+the details. Not proven: a seat running for days, session rotation and handover under real load, and the Codex path.
