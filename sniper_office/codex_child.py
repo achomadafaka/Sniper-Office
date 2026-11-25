@@ -93,7 +93,11 @@ def run(doc):
     env=dict(os.environ,**seat_forward.start(),CODEX_HOME=HOME,HOME='/opt/workspace',CODEX_CA_CERTIFICATE=CA,SSL_CERT_FILE=CA)
     head=[CLI,'exec','--json','--skip-git-repo-check','--dangerously-bypass-approvals-and-sandbox']
     argv=head+(['resume',doc['session_id'],'-'] if doc.get('session_id') else ['-'])
-    child=subprocess.Popen(argv,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,text=True,env=env,cwd='/opt/workspace')
+    # The CLI's own log for the latest wake only (sandbox token is fake), so a hang shows where it stopped.
+    os.makedirs('/opt/workspace/tmp',exist_ok=True)
+    log=open('/opt/workspace/tmp/codex-wake.log','w')
+    env.setdefault('RUST_LOG','warn,codex_core=info,codex_api=info,codex_client=info')
+    child=subprocess.Popen(argv,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=log,text=True,env=env,cwd='/opt/workspace')
     child.stdin.write(doc['prompt']);child.stdin.close()
     session,usage,failed,stalled=relay(doc,child.stdout)
     if stalled:
