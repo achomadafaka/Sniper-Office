@@ -73,7 +73,7 @@ class ModelProxy(P.Proxy):
     def _row(self,route,counted,outcome):
         """Raises when the write fails: the caller must not forward."""
         request_id=uuid.uuid4().hex
-        conn=sqlite3.connect(self.quota_db,timeout=2,isolation_level=None)
+        conn=sqlite3.connect(self.quota_db,timeout=10,isolation_level=None)
         try:Q.record_model_request(conn,request_id=request_id,actor_id=self.actor,account_alias=self.account_alias,at=time.time(),route=route,counted=counted,outcome=outcome)
         finally:conn.close()
         return request_id
@@ -81,7 +81,7 @@ class ModelProxy(P.Proxy):
     def _finish(self,request_id,outcome):
         """The row is already counted, so a failed status write only loses the status."""
         try:
-            conn=sqlite3.connect(self.quota_db,timeout=2,isolation_level=None)
+            conn=sqlite3.connect(self.quota_db,timeout=10,isolation_level=None)
             try:conn.execute('UPDATE quota_model_requests SET outcome=? WHERE request_id=?',(outcome,request_id))
             finally:conn.close()
         except sqlite3.Error:self._record(HOST,'accounting_status_lost')

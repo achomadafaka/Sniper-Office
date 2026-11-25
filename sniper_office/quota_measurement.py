@@ -29,6 +29,7 @@ def _id(value):
 
 
 def ensure_schema(conn):
+    conn.execute('PRAGMA journal_mode=WAL')   # readers (UI) must not block the seat proxies' writes; a write over the timeout refuses a model call
     with write_transaction(conn):
         conn.execute('CREATE TABLE IF NOT EXISTS quota_wakes('
             'wake_id TEXT PRIMARY KEY,actor_id TEXT NOT NULL,account_alias TEXT NOT NULL,'
