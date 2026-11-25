@@ -12,6 +12,10 @@ from sniper_office import ui as U, views as V
 _spec = importlib.util.spec_from_file_location('ui_demo_data', Path(__file__).resolve().parents[1] / 'examples/ui_demo_data.py')
 demo = importlib.util.module_from_spec(_spec);_spec.loader.exec_module(demo)
 TOKEN = 't' * 32
+from sniper_office import plugins
+_panels = importlib.util.spec_from_file_location('demo_panels', Path(__file__).resolve().parents[1] / 'examples/demo_panels.py')
+_module = importlib.util.module_from_spec(_panels);_panels.loader.exec_module(_module)
+PANELS = plugins.Host({});_module.register(PANELS)
 RESEARCHER = demo.SEATS[1][0]
 
 
@@ -19,7 +23,7 @@ RESEARCHER = demo.SEATS[1][0]
 def server(tmp_path, request, monkeypatch):
     office, quota = demo.build(tmp_path)
     monkeypatch.setattr(U.time, 'time', lambda: demo.NOW)
-    cfg = dict(office_db=str(office), quota_db=str(quota), clock_file=None, host='127.0.0.1', port=0, token=request.param, verbose=False)
+    cfg = dict(office_db=str(office), quota_db=str(quota), clock_file=None, host='127.0.0.1', port=0, token=request.param, verbose=False, panels=PANELS.panels)
     httpd = U.ThreadingHTTPServer(('127.0.0.1', 0), None);cfg['port'] = httpd.server_address[1];httpd.RequestHandlerClass = U.make_handler(cfg)
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     yield cfg
@@ -99,3 +103,16 @@ def test_token_file_must_be_private_and_long_and_remote_listening_needs_one(tmp_
     f.write_text('short')
     with pytest.raises(SystemExit):U.read_token(f)
     with pytest.raises(SystemExit, match='refusing to listen'):U.main(['--office-db', str(tmp_path / 'o.db'), '--host', '0.0.0.0'])
+
+
+def test_every_view_and_panel_is_served_and_a_broken_panel_does_not_break_the_others(server):
+    for path, key in (('/api/requests', 'asks'), ('/api/budget', 'accounts'), ('/api/evaluation', 'verdicts'), ('/api/health', 'lease')):
+        status, _, raw = call(server, 'GET', path);doc = json.loads(raw)
+        assert status == 200 and doc['state'] == 'known' and key in doc
+        assert [p['name'] for p in doc['panels']] == ['broken', 'numbers', 'open_items', 'throughput']
+    assert json.loads(call(server, 'GET', '/api/health')[2])['chains']['state'] == 'unavailable'
+    assert any(c['result'] == 'intact' for c in json.loads(call(server, 'GET', '/api/health?verify=1')[2])['chains']['items'])
+    shapes = {name: json.loads(call(server, 'GET', '/api/panel?name=' + name)[2]) for name in ('open_items', 'numbers', 'throughput', 'broken')}
+    assert (shapes['open_items']['shape'], shapes['numbers']['shape'], shapes['throughput']['shape']) == ('table', 'facts', 'series') and len(shapes['throughput']['points']) == 48
+    assert shapes['broken']['state'] == 'unavailable' and shapes['broken']['title'] == 'Broken panel' and shapes['open_items']['rows'][2][0] == '<b>markup is text</b>'
+    assert call(server, 'GET', '/api/panel?name=nope')[0] == 404 and call(server, 'GET', '/api/panel')[0] == 404

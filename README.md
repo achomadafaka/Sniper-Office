@@ -109,7 +109,7 @@ Operator page (stage 5a to 5c). `docs/UI.md` is the design.
 
 | Module | What it holds |
 |---|---|
-| `ui` | A small local web server, standard library only. Overview of every seat, one seat's timeline, the mail. Two actions with a token: write to a seat, clear a park. |
+| `ui` | A small local web server, standard library only. Views: overview, one seat's timeline, mail, requests and tickets, budget, evaluation, health, and project panels. Two actions with a token: write to a seat, clear a park. |
 | `views` | The read models behind it: bounded, read-only, unknown never shown as zero. |
 
 ```bash
@@ -121,7 +121,11 @@ PYTHONPATH=. python3 -m sniper_office.ui --office-db /tmp/office-demo/office.db 
 ```
 
 Then open http://127.0.0.1:8765. Add `--token-file` (a file only you can read, at least 24 characters) to enable the
-two actions; `--port` if 8765 is taken. Not built yet: requests, budget, evaluation and health views, project panels.
+two actions; `--port` if 8765 is taken.
+
+A project shows its own data with panels: `host.add_panel(name, title, read)` in its plug-in, where `read(now)` returns a
+table, a list of facts or a time series. Start the page with `--plugins yourmodule`. `examples/demo_panels.py` has one of
+each; try it with `--plugins examples.demo_panels`. The page draws the panel itself, so a project ships no scripts.
 
 The seat runtime needs Linux, `bwrap`, systemd user units and a dedicated system user (default `office`). It also
 needs the `cryptography` package on the host, and `claude-agent-sdk` and `playwright` inside the published runtime.

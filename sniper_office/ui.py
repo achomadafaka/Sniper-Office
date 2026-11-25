@@ -16,7 +16,7 @@ import stat
 import time
 from urllib.parse import parse_qs, urlsplit
 
-from . import clock as C, views as V
+from . import clock as C, plugins, views as V
 
 STATIC = Path(__file__).resolve().parent / 'ui_static'
 FILES = {'/': ('index.html', 'text/html; charset=utf-8'), '/app.js': ('app.js', 'text/javascript; charset=utf-8'), '/app.css': ('app.css', 'text/css; charset=utf-8')}
@@ -63,7 +63,7 @@ def make_handler(cfg):
 
         def _api(self, doc):
             # Every view says whether actions are on: a page opened straight on Mail must not guess.
-            self._send(200, dict(doc, writable=cfg['token'] is not None))
+            self._send(200, dict(doc, writable=cfg['token'] is not None, panels=[dict(name=n, title=v[0]) for n, v in sorted(cfg['panels'].items())]))
 
         def _host_ok(self):
             # A page on another site can make this browser call 127.0.0.1 under its own name; the Host header then is not ours.
@@ -87,6 +87,19 @@ def make_handler(cfg):
                     return self._api(V.seat(cfg['office_db'], cfg.get('quota_db'), query.get('actor', [''])[0], now=at, before=int(before) if before else None))
                 if url.path == '/api/mail':
                     return self._api(V.mail(cfg['office_db'], now=at))
+                if url.path == '/api/requests':
+                    return self._api(V.requests(cfg['office_db'], now=at))
+                if url.path == '/api/budget':
+                    return self._api(V.budget(cfg['office_db'], cfg.get('quota_db'), now=at))
+                if url.path == '/api/evaluation':
+                    return self._api(V.evaluation(cfg['office_db'], now=at))
+                if url.path == '/api/health':
+                    return self._api(V.health(cfg['office_db'], now=at, verify=query.get('verify', [''])[0] == '1'))
+                if url.path == '/api/panel':
+                    found = cfg['panels'].get(query.get('name', [''])[0])
+                    if found is None:
+                        return self._send(404, dict(error='not_found'))
+                    return self._api(dict(V.panel(found[1], now=at), title=found[0], as_of_page=at))
             except ValueError:
                 return self._send(400, dict(error='bad_arguments'))
             self._send(404, dict(error='not_found'))
@@ -137,6 +150,7 @@ def main(argv=None):
     p.add_argument('--office-db', required=True);p.add_argument('--quota-db');p.add_argument('--clock-file')
     p.add_argument('--host', default='127.0.0.1');p.add_argument('--port', type=int, default=8765)
     p.add_argument('--token-file', help='enables the two write actions');p.add_argument('--verbose', action='store_true')
+    p.add_argument('--plugins', default='', help='comma-separated modules whose register(host) adds panels; trusted code, as for a seat')
     args = p.parse_args(argv)
     token = read_token(args.token_file)
     try:
@@ -145,9 +159,10 @@ def main(argv=None):
         loopback = args.host == 'localhost'
     if not loopback and token is None:
         raise SystemExit('refusing to listen beyond this machine without --token-file; everything the seats wrote would be readable by the network')
-    cfg = dict(office_db=args.office_db, quota_db=args.quota_db, clock_file=args.clock_file, host=args.host, port=args.port, token=token, verbose=args.verbose)
+    host = plugins.load(dict(plugins=[name for name in args.plugins.split(',') if name], office_db=args.office_db, quota_db=args.quota_db))
+    cfg = dict(office_db=args.office_db, quota_db=args.quota_db, clock_file=args.clock_file, host=args.host, port=args.port, token=token, verbose=args.verbose, panels=host.panels)
     server = serve(cfg)
-    print('office ui on http://%s:%d (%s)' % (args.host, args.port, 'actions enabled' if token else 'read-only'), flush=True)
+    print('office ui on http://%s:%d (%s, %d project panels)' % (args.host, args.port, 'actions enabled' if token else 'read-only', len(host.panels)), flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

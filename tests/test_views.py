@@ -95,3 +95,61 @@ def test_clear_park_is_logged_as_the_operator_and_needs_a_real_seat_and_a_reason
     assert sqlite3.connect(dbs[1]).execute('SELECT actor_id,cleared_by,reason FROM seat_park_clears').fetchall() == [(RESEARCHER, 'operator', 'usage reading fixed')]
     assert V.clear_park(*dbs, actor_id='nobody', reason='x', now=NOW)['reason'] == 'unknown_seat'
     assert V.clear_park(*dbs, actor_id=RESEARCHER, reason='  ', now=NOW)['state'] == 'refused'
+
+
+def test_requests_show_what_seats_asked_and_where_each_ticket_stands(dbs):
+    out = V.requests(dbs[0], now=NOW)
+    assert out['state'] == 'known' and [(r['role'], r['kind'], r['why']) for r in out['asks']['items']] == [('reviewer', 'data', 'to check citations')]
+    ticket = out['tickets']['items'][0]
+    assert ticket['state'] == 'proposed' and ticket['problem'].startswith('The archive index') and ticket['steps'] == 0 and ticket['evidence_refs'] == ['event:request']
+
+
+def test_budget_separates_measured_from_unmeasured_and_dates_each_account_reading(dbs):
+    out = V.budget(*dbs, now=NOW);seats = {s['role']: s for s in out['seats']}
+    assert seats['head']['largest_wake_today'] == 14300 and seats['head']['wakes_last_hour'] == 1 and seats['head']['unmeasured_wakes_today'] == 0
+    assert seats['researcher']['tokens_today'] is None and seats['researcher']['unmeasured_wakes_today'] == 1 and seats['researcher']['largest_wake_today'] == 33000
+    account = out['accounts']['items'][0]
+    assert account['account'] == 'main' and account['age_s'] == 120 and [(w['name'], w['used_percent']) for w in account['windows']] == [('five_hour', 37.0), ('seven_day', 81.0)]
+    V.clear_park(*dbs, actor_id=RESEARCHER, reason='fixed', now=NOW)
+    assert [(c['role'], c['by']) for c in V.budget(*dbs, now=NOW)['clears']['items']] == [('researcher', 'operator')]
+    without = V.budget(dbs[0], None, now=NOW)
+    assert without['state'] == 'partial' and without['accounts']['state'] == 'unavailable' and all(s['tokens_today'] is None for s in without['seats'])
+
+
+def test_evaluation_shows_released_aggregates_and_a_store_without_those_tables_says_unavailable(dbs, tmp_path):
+    out = V.evaluation(dbs[0], now=NOW)
+    assert [e['epoch_id'] for e in out['epochs']['items']] == ['e2', 'e1'] and [t['status'] for t in out['trials']['items']] == ['PASS_PENDING_REPLICATION', 'RUNNING']
+    verdict = out['verdicts']['items'][0]
+    assert verdict['state'] == 'pass_pending_replication' and verdict['lift_lower'] == 0.31 and len(verdict['release_hash']) == 64 and 'grades' not in verdict
+    from sniper_office import seat_events as E, work as W
+    bare = tmp_path / 'seat-only.db';conn = sqlite3.connect(bare);W.ensure_schema(conn);E.ensure_schema(conn);conn.commit();conn.close()
+    out = V.evaluation(bare, now=NOW)
+    assert out['state'] == 'known' and {out[k]['state'] for k in ('epochs', 'trials', 'verdicts')} == {'unavailable'}
+    health = V.health(bare, now=NOW)
+    assert health['lease'] is None and health['heartbeat'] is None and health['turns']['reason'] == 'no_turn_table' and V.requests(bare, now=NOW)['tickets']['state'] == 'unavailable'
+
+
+def test_health_reads_lease_and_heartbeat_and_checks_chains_only_when_asked(dbs, monkeypatch):
+    out = V.health(dbs[0], now=NOW)
+    assert out['lease'] == dict(holder='supervisor-demo', generation=1, expires_at=NOW + 120, held=True) and out['heartbeat']['age_s'] == 4 and out['heartbeat']['progress'] == 'healthy_empty'
+    assert {(t['state'], t['count']) for t in out['turns']['items']} == {('completed', 1), ('partial', 1)} and out['chains']['state'] == 'unavailable'
+    assert V.health(dbs[0], now=NOW + 500)['lease']['held'] is False
+    checked = {c['table']: c for c in V.health(dbs[0], now=NOW, verify=True)['chains']['items']}
+    assert checked['trial_registry'] == dict(table='trial_registry', rows=2, result='intact') and checked['sealed_views']['result'] == 'intact' and 'grades' not in checked
+    conn = sqlite3.connect(dbs[0]);conn.execute('DROP TRIGGER trial_registry_no_update');conn.execute("UPDATE trial_registry SET payload_json=replace(payload_json,'RUNNING','PASS') WHERE seq=1");conn.commit();conn.close()
+    assert {c['table']: c for c in V.health(dbs[0], now=NOW, verify=True)['chains']['items']}['trial_registry']['result'] == 'broken_at_row_1'
+    monkeypatch.setattr(V, 'CHAIN_ROWS', 1)
+    assert {c['table']: c for c in V.health(dbs[0], now=NOW, verify=True)['chains']['items']}['trial_registry']['result'] == 'too_large_to_check_here'
+
+
+def test_panels_are_forced_into_three_shapes_and_a_bad_panel_is_unavailable_without_its_error_text():
+    table = V.panel(lambda now: dict(shape='table', columns=['a', 'b'], rows=[[1, object()], ['x' * 5000, None, 'extra']] + [[0, 0]] * 300), now=NOW)
+    assert table['state'] == 'known' and len(table['rows']) == 200 and table['limited'] and table['rows'][0][1].startswith('<object') and len(table['rows'][1]) == 2 and len(table['rows'][1][0]) == 2000
+    facts = V.panel(lambda now: dict(shape='facts', items=[dict(label='n', value=3, unit='items', as_of=now), dict(label='missing', value=None)]), now=NOW)
+    assert facts['items'] == [dict(label='n', value=3, unit='items', as_of=NOW), dict(label='missing', value=None, unit=None, as_of=None)]
+    series = V.panel(lambda now: dict(shape='series', unit='per hour', points=[[i, i * 2.] for i in range(2500)] + [[1, float('nan')], ['x', 1]]), now=NOW)
+    assert len(series['points']) == 2000 and series['limited'] and series['dropped'] == 2 and series['points'][-1] == (2499, 4998.)
+    def boom(now):raise RuntimeError('password=hunter2')
+    for bad, reason in ((boom, 'panel_failed'), (lambda now: dict(shape='pie'), 'panel_shape_invalid'), (lambda now: [1], 'panel_shape_invalid'), (lambda now: dict(shape='table', columns=[], rows=[]), 'panel_shape_invalid')):
+        out = V.panel(bad, now=NOW)
+        assert out == dict(state='unavailable', reason=reason) and 'hunter2' not in str(out)

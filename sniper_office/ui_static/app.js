@@ -2,7 +2,7 @@
 'use strict';
 (function () {
   var view = document.getElementById('view'), status = document.getElementById('status'), tokenInput = document.getElementById('token');
-  var inFlight = false, writable = false, lastOk = null, timer = null, draft = {};
+  var inFlight = false, writable = false, lastOk = null, timer = null, draft = {}, lastChains = null;
 
   function el(tag, text, cls) {
     var node = document.createElement(tag);
@@ -170,27 +170,165 @@
     return box;
   }
 
+  function part(section, emptyText, build) {     // one section of a view: unavailable is said, and is different from empty
+    if (section.state !== 'known') return note('Not available here: ' + String(section.reason || 'unknown').replace(/_/g, ' ') + '.');
+    if (!section.items.length) return note(emptyText);
+    var node = build(section.items);
+    return section.limited ? add(el('div'), node, note('Older rows exist and are not shown.')) : node;
+  }
+  function percent(v) { return v === null || v === undefined ? value(null) : el('span', (Math.round(v * 10) / 10) + '%'); }
+  function fixed(v, digits) { return typeof v === 'number' ? el('span', v.toFixed(digits)) : value(v); }
+  function seatLink(id, role) { if (!role) return el('span', id || 'unknown', 'id'); var a = el('a', role); a.href = '#/seat/' + encodeURIComponent(id); return a; }
+
+  function renderRequests(data) {
+    var box = el('div'), now = data.as_of;
+    if (data.state === 'unknown') return problem(data);
+    add(box, el('h2', 'Asked by seats'), part(data.asks, 'No seat has asked for anything.', function (items) {
+      return table(['When', 'Seat', 'Kind', 'Asks for', 'Why'], items.map(function (r) { return [timeCell(r.at, now), seatLink(r.actor_id, r.role), value(r.kind), el('p', r.text, 'text'), el('p', r.why === null ? '' : r.why, 'text')]; }));
+    }));
+    add(box, el('h2', 'Tickets to humans'), part(data.tickets, 'No tickets.', function (items) {
+      return table(['State', 'Problem', 'Done when', 'Evidence', 'Steps', 'Filed'], items.map(function (r) {
+        return [el('span', String(r.state || 'unknown').replace(/_/g, ' '), 'state'), el('p', r.problem, 'text'), el('p', r.done_when, 'text'), el('p', (r.evidence_refs || []).join('\n'), 'text'), num(value(r.steps)), timeCell(r.known_at, now)];
+      }));
+    }));
+    add(box, note('A request is what a seat wrote; nothing is granted by showing it. Ticket states move only through the host.'));
+    return box;
+  }
+
+  function renderBudget(data) {
+    var box = el('div'), now = data.as_of;
+    if (data.state === 'unknown') return problem(data);
+    add(box, el('h2', 'Seats'), table(['Seat', 'Wakes, last hour', 'Wakes today', 'Tokens today', 'Largest wake today', 'Unmeasured wakes'], data.seats.map(function (s) {
+      return [seatLink(s.actor_id, s.role), num(value(s.wakes_last_hour, s.usage_reason)), num(value(s.wakes_today, s.usage_reason)), num(value(s.tokens_today, s.usage_reason)), num(value(s.largest_wake_today, 'none measured')), num(value(s.unmeasured_wakes_today, s.usage_reason))];
+    })));
+    add(box, el('h2', 'Accounts'), part(data.accounts, 'No account reading has been recorded.', function (items) {
+      var rows = [];
+      items.forEach(function (a) {
+        if (!a.windows.length) rows.push([a.account, value(null, a.reading_reason || 'no window read'), '', '', add(el('span'), timeCell(a.observed_at, now), document.createTextNode(' (' + ago(a.observed_at, now) + ')'))]);
+        a.windows.forEach(function (w) { rows.push([a.account, w.name.replace(/_/g, ' '), num(percent(w.used_percent)), add(el('span'), timeCell(w.resets_at, now), document.createTextNode(' (' + until(w.resets_at, now) + ')')), add(el('span'), timeCell(a.observed_at, now), document.createTextNode(' (' + ago(a.observed_at, now) + ')'))]); });
+      });
+      return table(['Account', 'Window', 'Used', 'Resets', 'Measured'], rows);
+    }));
+    add(box, el('h2', 'Parks cleared'), part(data.clears, 'None.', function (items) {
+      return table(['When', 'Seat', 'By', 'Reason'], items.map(function (c) { return [timeCell(c.at, now), seatLink(c.actor_id, c.role), c.by, el('p', c.reason, 'text')]; }));
+    }));
+    add(box, note('Tokens are a total only when every wake today was measured. Today is the UTC day. An account reading is a measurement at the time shown, not a live value.'));
+    return box;
+  }
+
+  function renderEvaluation(data) {
+    var box = el('div'), now = data.as_of;
+    if (data.state === 'unknown') return problem(data);
+    add(box, el('h2', 'Released verdicts'), part(data.verdicts, 'No verdict has been released.', function (items) {
+      var wrap = el('div');
+      items.forEach(function (v) {
+        var cards = el('dl', null, 'cards');
+        [['Verdict', String(v.state).replace(/_/g, ' ')], ['Hypothesis', v.hypothesis_id], ['Attempt', v.k === null ? null : v.k + ' at significance ' + v.alpha_k],
+         ['Lift, lower bound', v.lift_lower === null || v.lift_lower === undefined ? null : v.lift_lower.toFixed(3) + ' ' + v.unit + ' (needs above ' + v.delta0 + ')'],
+         ['Net, lower bound', v.net_lower === null || v.net_lower === undefined ? null : v.net_lower.toFixed(3) + ' ' + v.unit], ['Cases', v.cases === null ? null : v.graded + ' graded of ' + v.cases + ', ' + v.censored + ' censored'],
+         ['Clusters', v.clusters], ['Config custody', v.custody], ['Released', when(v.released_at)]].forEach(function (pair) { add(cards, add(el('div', null, 'card'), el('dt', pair[0]), add(el('dd'), value(pair[1])))); });
+        add(wrap, cards);
+        if (v.reasons && v.reasons.length) add(wrap, note('Reasons: ' + v.reasons.join(', ').replace(/_/g, ' ') + '.'));
+      });
+      return wrap;
+    }));
+    add(box, el('h2', 'Trial registry'), part(data.trials, 'No evaluated epoch has been opened.', function (items) {
+      return table(['Row', 'Attempt', 'Significance', 'Hypothesis', 'Status', 'Epoch'], items.map(function (r) { return [num(value(r.seq)), num(value(r.k)), num(value(r.alpha_k)), value(r.hypothesis_id), el('span', String(r.status || 'unknown').replace(/_/g, ' ').toLowerCase(), 'state'), value(r.epoch_id)]; }));
+    }));
+    add(box, el('h2', 'Epochs'), part(data.epochs, 'No epoch recorded.', function (items) {
+      return table(['Epoch', 'Kind', 'Opened', 'Closed', 'Status'], items.map(function (e) { return [value(e.epoch_id), value(e.kind), timeCell(e.opened_at, now), e.closed_at === null ? 'open' : timeCell(e.closed_at, now), value(e.status || (e.closed_at === null ? 'open' : 'closed'))]; }));
+    }));
+    add(box, note('Only released aggregates are shown. Per-case results stay in the evaluation file, which this page never opens. A pass files a ticket for a human and changes nothing by itself.'));
+    return box;
+  }
+
+  function renderHealth(data, verified) {
+    var box = el('div'), now = data.as_of;
+    if (data.state === 'unknown') return problem(data);
+    var cards = el('dl', null, 'cards'), lease = data.lease, beat = data.heartbeat;
+    [['Supervisor lease', lease === null ? null : lease.held ? 'held by ' + lease.holder : 'not held'], ['Lease expires', lease && lease.expires_at ? when(lease.expires_at) + ' (' + until(lease.expires_at, now) + ')' : null],
+     ['Last heartbeat', beat && beat.at ? when(beat.at) + ' (' + ago(beat.at, now) + ')' : null], ['Progress', beat ? beat.progress : null]].forEach(function (pair) {
+      add(cards, add(el('div', null, 'card'), el('dt', pair[0]), add(el('dd'), value(pair[1], lease === null && beat === null ? 'no supervisor in this store' : 'not recorded'))));
+    });
+    add(box, el('h2', 'Supervisor'), cards);
+    add(box, el('h2', 'Turns'), part(data.turns, 'No turns recorded.', function (items) { return table(['State', 'Count (last 500)'], items.map(function (r) { return [r.state, num(value(r.count))]; })); }));
+    add(box, el('h2', 'Record chains'));
+    var button = el('button', verified ? 'Check again' : 'Check the append-only tables'); button.type = 'button';
+    button.addEventListener('click', function () { verifyOnce = true; load(); });
+    add(box, button);
+    if (data.chains.state === 'known') add(box, table(['Table', 'Rows', 'Result'], data.chains.items.map(function (c) { return [c.table, num(value(c.rows, 'too many to count here')), el('span', c.result.replace(/_/g, ' '), 'state ' + (c.result === 'intact' ? 'awake' : 'parked'))]; })));
+    add(box, note('The check re-hashes every row, so it runs only when asked. It proves no row was edited or removed from the middle. It cannot see a removed tail: that needs the last hash kept somewhere outside this database.'));
+    return box;
+  }
+
+  function chart(points, unit) {
+    var canvas = document.createElement('canvas'), css = getComputedStyle(document.documentElement);
+    // Drawn at the width it is shown at, so the labels stay 13 px on a phone instead of shrinking with the picture.
+    var cw = Math.max(260, Math.min(900, view.clientWidth || 900)), ch = 220, dpr = window.devicePixelRatio || 1;
+    canvas.width = Math.round(cw * dpr); canvas.height = Math.round(ch * dpr); canvas.style.width = cw + 'px'; canvas.style.height = ch + 'px'; canvas.setAttribute('role', 'img');
+    var xs = points.map(function (p) { return p[0]; }), ys = points.map(function (p) { return p[1]; });
+    var x0 = Math.min.apply(null, xs), x1 = Math.max.apply(null, xs), y0 = Math.min.apply(null, ys), y1 = Math.max.apply(null, ys);
+    canvas.setAttribute('aria-label', points.length + ' points from ' + when(x0) + ' to ' + when(x1) + ', lowest ' + y0.toFixed(2) + ', highest ' + y1.toFixed(2) + (unit ? ' ' + unit : ''));
+    if (y1 === y0) { y1 += 1; y0 -= 1; } if (x1 === x0) x1 += 1;
+    var g = canvas.getContext('2d'), L = 52, R = 10, T = 10, B = 26, W = cw - L - R, H = ch - T - B;
+    g.scale(dpr, dpr);
+    g.font = '13px system-ui, sans-serif'; g.fillStyle = css.getPropertyValue('--dim'); g.strokeStyle = css.getPropertyValue('--line'); g.lineWidth = 1;
+    [0, .5, 1].forEach(function (f) { var y = T + H - f * H; g.beginPath(); g.moveTo(L, y); g.lineTo(L + W, y); g.stroke(); g.fillText((y0 + f * (y1 - y0)).toFixed(2), 4, y + 4); });
+    g.fillText(when(x0).slice(5, 16), L, ch - 6); var end = when(x1).slice(5, 16); g.fillText(end, L + W - g.measureText(end).width, ch - 6);
+    g.strokeStyle = css.getPropertyValue('--accent'); g.lineWidth = 2; g.beginPath();
+    points.forEach(function (p, i) { var x = L + (p[0] - x0) / (x1 - x0) * W, y = T + H - (p[1] - y0) / (y1 - y0) * H; if (i) g.lineTo(x, y); else g.moveTo(x, y); });
+    g.stroke();
+    return canvas;
+  }
+  function renderPanel(data) {
+    var box = el('div'), now = data.as_of_page;
+    add(box, el('h2', data.title));
+    if (data.state !== 'known') return add(box, note('This panel is unavailable: ' + String(data.reason).replace(/_/g, ' ') + '. The rest of the page is unaffected.'));
+    if (data.shape === 'table') add(box, data.rows.length ? table(data.columns, data.rows.map(function (r) { return r.map(function (c) { return typeof c === 'number' ? num(value(c)) : value(c === true ? 'yes' : c === false ? 'no' : c); }); })) : note('No rows.'));
+    if (data.shape === 'facts') { var cards = el('dl', null, 'cards'); data.items.forEach(function (i) { add(cards, add(el('div', null, 'card'), el('dt', i.label), add(el('dd'), value(i.value === null ? null : (typeof i.value === 'number' ? i.value.toLocaleString('en-US') : i.value) + (i.unit ? ' ' + i.unit : ''))), i.as_of ? el('dt', 'as of ' + when(i.as_of)) : null)); }); add(box, cards); }
+    if (data.shape === 'series') add(box, data.points.length > 1 ? chart(data.points, data.unit) : note('Fewer than two points.'), data.points.length > 1 ? note(data.points.length + ' points' + (data.unit ? ', ' + data.unit : '') + (data.dropped ? '; ' + data.dropped + ' unreadable points left out' : '') + '.') : null);
+    add(box, note((data.note ? data.note + ' ' : '') + 'Supplied by the project' + (data.as_of ? ', as of ' + when(data.as_of) : '') + (data.limited ? '. Cut to the newest rows' : '') + '.'));
+    return box;
+  }
+
+  var VIEWS = { mail: ['/api/mail', renderMail], requests: ['/api/requests', renderRequests], budget: ['/api/budget', renderBudget], evaluation: ['/api/evaluation', renderEvaluation], overview: ['/api/overview', renderOverview] };
+  var verifyOnce = false, panelsKey = '';
   function route() {
     var hash = location.hash.replace(/^#\/?/, ''), parts = hash.split('/');
     if (parts[0] === 'seat' && parts[1]) return { name: 'seat', actor: decodeURIComponent(parts[1]) };
-    return { name: parts[0] === 'mail' ? 'mail' : 'overview' };
+    if (parts[0] === 'panel' && parts[1]) return { name: 'panel', panel: decodeURIComponent(parts[1]) };
+    if (parts[0] === 'health') return { name: 'health' };
+    return { name: VIEWS[parts[0]] ? parts[0] : 'overview' };
+  }
+  function panelLinks(panels) {
+    var key = JSON.stringify(panels || []);
+    if (key === panelsKey) return;
+    panelsKey = key;
+    var holder = document.getElementById('panel-links'); holder.replaceChildren();
+    (panels || []).forEach(function (p) { var a = el('a', p.title); a.href = '#/panel/' + encodeURIComponent(p.name); a.dataset.view = 'panel:' + p.name; holder.appendChild(a); });
   }
   function load(focus) {
     if (inFlight) return;
-    var r = route(), path = r.name === 'seat' ? '/api/seat?actor=' + encodeURIComponent(r.actor) : r.name === 'mail' ? '/api/mail' : '/api/overview';
+    var r = route(), verified = verifyOnce; verifyOnce = false;
+    var path = r.name === 'seat' ? '/api/seat?actor=' + encodeURIComponent(r.actor) : r.name === 'panel' ? '/api/panel?name=' + encodeURIComponent(r.panel) : r.name === 'health' ? '/api/health' + (verified ? '?verify=1' : '') : VIEWS[r.name][0];
+    var current = r.name === 'panel' ? 'panel:' + r.panel : r.name === 'seat' ? 'overview' : r.name;
     inFlight = true;
-    document.getElementById('nav-overview').toggleAttribute('aria-current', false); document.getElementById('nav-mail').toggleAttribute('aria-current', false);
-    document.getElementById(r.name === 'mail' ? 'nav-mail' : 'nav-overview').setAttribute('aria-current', 'page');
+    function mark() { Array.prototype.forEach.call(document.querySelectorAll('#nav a'), function (a) { if (a.dataset.view === current) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); }); }
+    mark();
     var active = document.activeElement, typing = !focus && active && view.contains(active) && /^(TEXTAREA|INPUT|SELECT)$/.test(active.tagName);
     api(path).then(function (res) {
       inFlight = false;
       var data = res.body;
       if (typeof data.writable === 'boolean') writable = data.writable;
+      if (data.panels) { panelLinks(data.panels); mark(); }
+      if (r.name === 'health' && !verified && view.querySelector('table') && data.chains && data.chains.state !== 'known' && lastChains) data.chains = lastChains;   // keep the last check on screen between polls
+      if (r.name === 'health' && data.chains && data.chains.state === 'known') lastChains = data.chains;
       if (typing) { status.textContent = 'Paused while you type. Last read ' + (lastOk ? when(lastOk) : 'never'); return; }   // never rebuild a form under the cursor
-      var node = !res.ok ? problem({ reason: data.error }) : r.name === 'seat' ? renderSeat(data, r.actor) : r.name === 'mail' ? renderMail(data) : renderOverview(data);
+      var node = !res.ok ? problem({ reason: data.error }) : r.name === 'seat' ? renderSeat(data, r.actor) : r.name === 'panel' ? renderPanel(data) : r.name === 'health' ? renderHealth(data, !!lastChains) : VIEWS[r.name][1](data);
       view.replaceChildren(node);
-      lastOk = data.as_of || lastOk;
-      status.textContent = (data.state === 'known' ? 'As of ' : data.state === 'partial' ? 'Partial, as of ' : 'Unknown, as of ') + when(data.as_of);
+      lastOk = data.as_of || data.as_of_page || lastOk;
+      var asOf = data.as_of || data.as_of_page;
+      status.textContent = (data.state === 'known' ? 'As of ' : data.state === 'partial' ? 'Partial, as of ' : 'Unavailable, as of ') + when(asOf);
       document.getElementById('access-note').textContent = writable ? 'Sending mail and clearing a park need the token from the server\'s token file. It is kept in this tab only.' : 'Read-only: the server was started without a token file.';
       tokenInput.disabled = !writable;
       if (focus) view.focus();
@@ -203,7 +341,7 @@
     clearInterval(timer);
     timer = setInterval(function () { if (!document.hidden) load(); }, 5000);
   }
-  window.addEventListener('hashchange', function () { draft = {}; load(true); });
+  window.addEventListener('hashchange', function () { draft = {}; lastChains = null; load(true); });
   document.addEventListener('visibilitychange', function () { if (!document.hidden) load(); });
   document.getElementById('refresh').addEventListener('click', function () { if (document.activeElement) document.activeElement.blur(); load(); });
   load(); schedule();

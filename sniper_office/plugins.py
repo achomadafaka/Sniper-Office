@@ -23,7 +23,7 @@ class Tool:
 
 class Host:
     def __init__(self,cfg):
-        self.cfg=cfg;self.tools={};self.wake_sources=[];self.deny_host_sources=[];self.label_sources=[];self.busy_checks=[];self.retention_rules=[]
+        self.cfg=cfg;self.tools={};self.wake_sources=[];self.deny_host_sources=[];self.label_sources=[];self.busy_checks=[];self.retention_rules=[];self.panels={}
         self.notifier=None;self.pager=None
 
     def add_tool(self,name,description,properties,required,handler,*,group=None,call_refs=None,result_refs=None):
@@ -43,6 +43,15 @@ class Host:
         """fn(seat) -> True while work is in flight that a session rotation must not interrupt. Raising reads as busy."""
         if not callable(fn):raise ValueError('plugin_busy_check')
         self.busy_checks.append(fn)
+
+    def add_panel(self,name,title,read):
+        """A view of the project's own data on the operator page. read(now) returns one of three shapes, which the page renders itself:
+          {'shape':'table','columns':[...],'rows':[[...],...]}            up to 16 columns, 200 rows
+          {'shape':'facts','items':[{'label','value','unit','as_of'},...]}
+          {'shape':'series','points':[[unix_time,value],...],'unit':...}  up to 2,000 points
+        Optional in each: 'as_of', 'limited', 'note'. Runs in the UI server process on every poll: open your data read-only and keep it bounded."""
+        if not isinstance(name,str) or not _NAME.match(name) or not isinstance(title,str) or not 1<=len(title)<=60 or not callable(read):raise ValueError('plugin_panel')
+        self.panels[name]=(title,read)
 
     def add_retention(self,fn):
         """fn(cfg, office_conn, now) -> one log line. Runs hourly with the built-in rules; delete in bounded batches."""

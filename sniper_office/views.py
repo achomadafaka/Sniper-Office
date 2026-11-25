@@ -171,6 +171,195 @@ def mail(office_db, *, now, limit=MAIL):
     return out
 
 
+def _has(conn, table):
+    return conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone() is not None
+
+
+def _part(reason=None):
+    """One section of a view. A table this deployment does not have is 'unavailable', which is different from an empty list."""
+    return dict(state='unavailable' if reason else 'known', items=[], limited=False, reason=reason)
+
+
+def requests(office_db, *, now, limit=100):
+    """What seats asked for, and tickets to humans with where each one stands."""
+    out = dict(state='unknown', as_of=now if _finite(now) else None, asks=_part('not_read'), tickets=_part('not_read'), reason=None)
+    try:
+        with _ro(office_db) as conn:
+            roles = {s['actor_id']: s['role'] for s in _roster(conn)[0]}
+            asks = _part()
+            rows = conn.execute("SELECT seq,actor_id,corrected_at,text,refs_json,epoch_id FROM office_v2_events WHERE kind='request' ORDER BY seq DESC LIMIT ?", (limit + 1,)).fetchall()
+            asks['limited'] = len(rows) > limit
+            for seq, actor, at, text, raw, epoch in rows[:limit]:
+                refs = _refs(raw)
+                asks['items'].append(dict(seq=seq, actor_id=actor, role=roles.get(actor), at=at, text=text, epoch_id=epoch,
+                                          kind=refs.get('kind') if isinstance(refs.get('kind'), str) else None, why=refs.get('why') if isinstance(refs.get('why'), str) else None))
+            tickets = _part() if _has(conn, 'tickets') else _part('no_ticket_table')
+            if tickets['state'] == 'known':
+                rows = conn.execute('SELECT id,substr(payload_json,1,65537) FROM tickets ORDER BY rowid DESC LIMIT ?', (limit + 1,)).fetchall()
+                tickets['limited'] = len(rows) > limit
+                for tid, raw in rows[:limit]:
+                    doc = _refs(raw) if len(raw) <= 65536 else {}
+                    history = doc.get('history') if isinstance(doc.get('history'), list) else []
+                    last = history[-1] if history and isinstance(history[-1], dict) else {}
+                    tickets['items'].append(dict(ticket_id=tid, state=doc.get('state'), author=doc.get('author'), problem=doc.get('problem'), done_when=doc.get('done_when'),
+                                                 known_at=doc.get('known_at'), expected_impact=doc.get('expected_impact'), evidence_refs=(doc.get('evidence_refs') or [])[:8],
+                                                 steps=len(history), last_actor=last.get('actor_id'), last_at=last.get('known_at')))
+            out.update(state='partial' if asks['limited'] or tickets['limited'] else 'known', asks=asks, tickets=tickets)
+    except sqlite3.Error as exc:
+        return dict(out, reason='store_unavailable:' + type(exc).__name__)
+    return out
+
+
+def budget(office_db, quota_db, *, now):
+    """Per seat: wakes this hour and today, tokens today, the largest wake. Per account: each usage window as last measured, and how old that reading is."""
+    out = dict(state='unknown', as_of=now if _finite(now) else None, seats=[], accounts=_part('not_read'), clears=_part('not_read'), reason=None)
+    if not _finite(now):
+        return dict(out, reason='clock_unknown')
+    try:
+        with _ro(office_db) as conn, _quota(quota_db) as quota:
+            seats, _ = _roster(conn)
+            if quota is None:
+                return dict(out, seats=[dict(s, **_usage(None, s['actor_id'], now)) for s in seats], accounts=_part('quota_unavailable'), clears=_part('quota_unavailable'), state='partial')
+            for s in seats:
+                hour = quota.execute('SELECT count(*) FROM quota_wakes WHERE actor_id=? AND ended_at>?', (s['actor_id'], now - 3600)).fetchone()[0]
+                top = quota.execute("SELECT max(used) FROM (SELECT used FROM quota_wakes WHERE actor_id=? AND ended_at>=? AND state='known' ORDER BY ended_at DESC LIMIT 500)", (s['actor_id'], now - now % DAY)).fetchone()[0]
+                unknown = quota.execute("SELECT count(*) FROM (SELECT state FROM quota_wakes WHERE actor_id=? AND ended_at>=? ORDER BY ended_at DESC LIMIT 500) WHERE state!='known'", (s['actor_id'], now - now % DAY)).fetchone()[0]
+                out['seats'].append(dict(actor_id=s['actor_id'], role=s['role'], wakes_last_hour=hour, largest_wake_today=top, unmeasured_wakes_today=unknown, **_usage(quota, s['actor_id'], now)))
+            accounts = _part()
+            for alias, at, raw in quota.execute('SELECT account_alias,max(observed_at),payload_json FROM quota_account_snapshots GROUP BY account_alias ORDER BY account_alias LIMIT 16'):
+                doc = _refs(raw);windows = doc.get('windows') if isinstance(doc.get('windows'), dict) else {}
+                accounts['items'].append(dict(account=alias, observed_at=at, age_s=now - at if _finite(at) else None, provider=doc.get('provider'), reading=doc.get('state'), reading_reason=doc.get('reason'),
+                                              windows=[dict(name=name, used_percent=w.get('used_percent'), resets_at=w.get('resets_at')) for name, w in sorted(windows.items())[:8] if isinstance(w, dict)]))
+            clears = _part() if _has(quota, 'seat_park_clears') else _part('none_recorded')
+            if clears['state'] == 'known':
+                roles = {s['actor_id']: s['role'] for s in seats}
+                clears['items'] = [dict(actor_id=a, role=roles.get(a), at=at, by=by, reason=why) for a, at, by, why in quota.execute('SELECT actor_id,cleared_at,cleared_by,reason FROM seat_park_clears ORDER BY cleared_at DESC LIMIT 20')]
+            out.update(state='known', accounts=accounts, clears=clears)
+    except sqlite3.Error as exc:
+        return dict(out, seats=[], reason='store_unavailable:' + type(exc).__name__)
+    return out
+
+
+def evaluation(office_db, *, now):
+    """Epochs, the trial registry in order, and each released verdict. Released aggregates only: this never opens the evaluation file."""
+    out = dict(state='unknown', as_of=now if _finite(now) else None, epochs=_part('not_read'), trials=_part('not_read'), verdicts=_part('not_read'), reason=None)
+    try:
+        with _ro(office_db) as conn:
+            epochs = _part() if _has(conn, 'epochs') else _part('no_epoch_table')
+            if epochs['state'] == 'known':
+                for (raw,) in conn.execute("SELECT payload_json FROM epochs ORDER BY json_extract(payload_json,'$.opened_at') DESC LIMIT 20"):
+                    e = _refs(raw)
+                    epochs['items'].append({k: e.get(k) for k in ('epoch_id', 'kind', 'opened_at', 'closed_at', 'status', 'verdict', 'k', 'alpha_k', 'hypothesis_id', 'reason', 'config_custody')})
+            trials = _part() if _has(conn, 'trial_registry') else _part('no_trial_registry')
+            if trials['state'] == 'known':
+                rows = conn.execute('SELECT seq,payload_json FROM trial_registry ORDER BY seq DESC LIMIT 101').fetchall()
+                trials['limited'] = len(rows) > 100
+                trials['items'] = [dict(seq=seq, **{k: _refs(raw).get(k) for k in ('k', 'alpha_k', 'hypothesis_id', 'status', 'epoch_id', 'reason', 'look_id')}) for seq, raw in rows[:100]]
+            verdicts = _part() if _has(conn, 'sealed_views') else _part('no_released_views')
+            if verdicts['state'] == 'known':
+                keep = ('state', 'reasons', 'epoch_id', 'hypothesis_id', 'k', 'alpha_k', 'released_at', 'estimand', 'unit', 'delta0', 'cases', 'graded', 'censored', 'clusters', 'net_mean', 'net_lower',
+                        'lift_mean', 'lift_lower', 'positive_clusters', 'top3_share', 'team_total', 'baseline_total', 'fixed_cost', 'custody', 'gaps')
+                for digest, raw in conn.execute("SELECT row_hash,payload_json FROM sealed_views WHERE json_extract(payload_json,'$.kind')='evaluation_verdict' ORDER BY seq DESC LIMIT 20"):
+                    doc = _refs(raw)
+                    verdicts['items'].append(dict(release_hash=digest, **{k: doc.get(k) for k in keep}))
+            out.update(state='known', epochs=epochs, trials=trials, verdicts=verdicts)
+    except sqlite3.Error as exc:
+        return dict(out, reason='store_unavailable:' + type(exc).__name__)
+    return out
+
+
+CHAIN_ROWS = 200_000
+
+
+def health(office_db, *, now, verify=False):
+    """Supervisor lease and heartbeat, turn states, and on request a hash-chain check of the append-only tables. The check re-hashes every row, so it
+    is asked for, never polled, and a table over CHAIN_ROWS rows is reported as too large instead of holding the store."""
+    out = dict(state='unknown', as_of=now if _finite(now) else None, lease=None, heartbeat=None, turns=_part('not_read'), chains=_part('not_checked'), reason=None)
+    if not _finite(now):
+        return dict(out, reason='clock_unknown')
+    try:
+        with _ro(office_db) as conn:
+            if _has(conn, 'supervisor_lease'):
+                row = conn.execute('SELECT holder,generation,expires_at FROM supervisor_lease WHERE id=1').fetchone()
+                out['lease'] = dict(holder=row[0], generation=row[1], expires_at=row[2], held=bool(_finite(row[2]) and row[2] > now)) if row else dict(holder=None, held=False)
+            if _has(conn, 'heartbeats'):
+                row = conn.execute("SELECT payload_json FROM heartbeats WHERE id='supervisor'").fetchone()
+                beat = _refs(row[0]) if row else {}
+                frontiers = beat.get('frontiers') if isinstance(beat.get('frontiers'), dict) else {}
+                out['heartbeat'] = dict(at=beat.get('at'), age_s=now - beat['at'] if _finite(beat.get('at')) else None, generation=beat.get('generation'), progress=frontiers.get('state'),
+                                        oldest_pending_s=frontiers.get('oldest_pending_s')) if row else dict(at=None, age_s=None)
+            turns = _part() if _has(conn, 'turn_runs') else _part('no_turn_table')
+            if turns['state'] == 'known':
+                counts = {}
+                rows = conn.execute("SELECT json_extract(payload_json,'$.state') FROM turn_runs ORDER BY json_extract(payload_json,'$.created_at') DESC LIMIT 501").fetchall()
+                turns['limited'] = len(rows) > 500
+                for (state,) in rows[:500]:
+                    counts[state or 'unknown'] = counts.get(state or 'unknown', 0) + 1
+                turns['items'] = [dict(state=k, count=v) for k, v in sorted(counts.items())]
+            if verify:
+                from . import store as S
+                chains = _part()
+                for table in sorted(S.APPEND_ONLY_TABLES - S.PRIVATE_TABLES):
+                    if not _has(conn, table):
+                        continue
+                    rows = conn.execute('SELECT count(*) FROM (SELECT 1 FROM ' + table + ' LIMIT ?)', (CHAIN_ROWS + 1,)).fetchone()[0]
+                    if rows > CHAIN_ROWS:
+                        chains['items'].append(dict(table=table, rows=None, result='too_large_to_check_here'));continue
+                    try:
+                        intact, bad = S.verify_chain(conn, table)
+                    except sqlite3.Error:
+                        chains['items'].append(dict(table=table, rows=rows, result='deadline'));continue
+                    chains['items'].append(dict(table=table, rows=rows, result='intact' if intact else 'broken_at_row_%s' % bad))
+                out['chains'] = chains
+            out.update(state='known', turns=turns)
+    except sqlite3.Error as exc:
+        return dict(out, reason='store_unavailable:' + type(exc).__name__)
+    return out
+
+
+# ---- project panels
+
+PANEL_ROWS = 200
+PANEL_POINTS = 2000
+PANEL_COLUMNS = 16
+PANEL_TEXT = 2000
+
+
+def _cell(v):
+    if v is None or type(v) is bool or _finite(v):
+        return v
+    return str(v)[:PANEL_TEXT]                      # anything else becomes capped text; the page renders text only
+
+
+def panel(read, *, now):
+    """Run one project panel and force its answer into one of three shapes. A panel that raises, returns another shape or is too big is
+    'unavailable' with a reason; it never breaks the page and its exception text is not shown."""
+    try:
+        doc = read(now)
+        if not isinstance(doc, dict):
+            raise ValueError('shape')
+        shape = doc.get('shape')
+        base = dict(state='known', shape=shape, as_of=doc.get('as_of') if _finite(doc.get('as_of')) else None, limited=bool(doc.get('limited')),
+                    note=str(doc['note'])[:500] if isinstance(doc.get('note'), str) else None)
+        if shape == 'table':
+            columns = [str(c)[:80] for c in doc['columns']][:PANEL_COLUMNS]
+            rows = doc['rows']
+            if not columns or not isinstance(rows, list):
+                raise ValueError('shape')
+            return dict(base, columns=columns, rows=[[_cell(v) for v in list(r)[:len(columns)]] for r in rows[:PANEL_ROWS]], limited=base['limited'] or len(rows) > PANEL_ROWS)
+        if shape == 'facts':
+            items = doc['items']
+            return dict(base, items=[dict(label=str(i['label'])[:120], value=_cell(i.get('value')), unit=str(i['unit'])[:24] if i.get('unit') else None,
+                                          as_of=i.get('as_of') if _finite(i.get('as_of')) else None) for i in items[:PANEL_ROWS]], limited=base['limited'] or len(items) > PANEL_ROWS)
+        if shape == 'series':
+            points = [(p[0], p[1]) for p in doc['points'] if _finite(p[0]) and _finite(p[1])]
+            return dict(base, unit=str(doc['unit'])[:24] if doc.get('unit') else None, points=points[-PANEL_POINTS:], limited=base['limited'] or len(points) > PANEL_POINTS,
+                        dropped=len(doc['points']) - len(points))
+        raise ValueError('shape')
+    except Exception as exc:
+        return dict(state='unavailable', reason='panel_failed' if not isinstance(exc, (ValueError, KeyError, TypeError, IndexError)) else 'panel_shape_invalid')
+
+
 # ---- the two operator actions
 
 def send_operator_mail(office_db, *, to_actor_id, client_id, text, now):
