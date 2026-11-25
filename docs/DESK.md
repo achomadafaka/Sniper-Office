@@ -13,7 +13,7 @@ A tool whose config key is missing, or whose file cannot be read, answers `{"sta
 
 | key | used by | source project path |
 |---|---|---|
-| `desk_db` | feed_list, sheet_read, paper_order | `data/memecoin_desk.db` |
+| `desk_db` | feed_list, sheet_read, paper_order | the Office desk db the feed collector writes (`~/.local/share/sniper-office/desk.db`, see below); a source-project db of the same shape also works |
 | `ledger_db` | book_view, paper_order, paper_exit, results_view | the Office ledger the filler writes (`~/.local/share/sniper-office/ledger.db`); one file, one book per judge |
 | `results_ledgers` | results_view (list; default `[ledger_db]`) | the Office ledger, optionally followed by the source project's old ledgers as read-only history |
 | `ledger_epoch` | book id in the ledger (default: the seat epoch) | `office-v2-explore-gpt-1` for the GPT judge |
@@ -74,3 +74,13 @@ Unknown or empty on purpose, because this store holds nothing for them: predicti
 | Situation | none: a world map |
 
 Unknown or empty on purpose, because this store holds nothing for them: prediction strategies, perps and stock margin returns, the scanner, headlines, world-map stories and the paper charts. Those header stats are replaced by this office's own (seats awake, wakes, tokens, mail, requests, tool calls, paper book). The map draws no points. The source page's other rooms (Strategy Lab, Paper Labs, Explorer, Memes, Sports, Video rule lab, Coach, Control) are not ported. The Trading book is `unknown` unless `--ledger-db` is given: it counts open and closed orders, wins and net of costs for closed orders with a recorded exit price (modelled fills, no landing proof).
+
+## Live feed collector
+
+`python3 -m sniper_office.desk.feed --config feed.json [--once]` (unit: `deploy/office-desk-feed.service`, config: `config/desk_feed.example.json`) is a host process, not a seat. It writes one `desk_tickets` row (stage `hard_filter`) per pool into the Office desk db, so `feed_list`, `sheet_read` and `paper_order` work with no other process. Point seats' `desk_db` at its `desk_db`.
+
+- Sources (https only, fixed host allowlist, no redirects, 2 MB cap, per-host pause, 429 backoff): DexScreener token profiles, token boosts and token pairs; GeckoTerminal new pools; Jupiter lite quote (sell round trip); optional research RPC (`research_env_file`, key `MEMECOIN_RESEARCH_HELIUS_RPC_URL`; methods `getAccountInfo`, `getMultipleAccounts`, `getTokenLargestAccounts`, `getTokenSupply` only; url never logged or stored).
+- Each check row: `status` (pass / kill / unknown), `reason`, `source`, `fetched_at`, the values, and for market data the provider's claim. Nothing is invented; unknown is recorded as unknown.
+- Verdict (ported from the source hard filter): any kill => SKIP; unknown market_data, token_safety, sell_probe, liquidity, mcap, chart or holders => SKIP; else PASS. Unknown cluster / dump_group never refuse. Kills: `liq_min_quote_sol` (default 10 SOL quote side, source tests used 1 to 40), `mcap_safety` [5000, 50M] USD, mint or freeze authority open, transfer hook, round trip loss above `round_trip_loss_pct_max` (8), 20+ buys and 0 sells in 5 min, pair older than `max_pair_age_s` (Office addition).
+- Dropped, needs the source's private tape or graph: dump_group, cluster, mayhem flag, 60 s chart prints, pool-math sell probe (replaced by a Jupiter route round trip at `probe_sol`). Without the RPC key, token_safety and holders are unknown, so nothing PASSes.
+- A mint the provider cannot price yet is retried each cycle until `retry_unknown_s`, then written SKIP unknown. One ticket per mint (its best-liquidity pair). Retention: `retention_days` and `max_rows`, applied each cycle.

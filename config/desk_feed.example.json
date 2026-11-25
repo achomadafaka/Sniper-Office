@@ -1,0 +1,15 @@
+{
+  "desk_db": "/path/to/.local/share/sniper-office/desk.db",
+  "research_env_file": "/path/to/.config/sniper-office/research.env",
+  "interval_s": 60,
+  "max_new_per_cycle": 15,
+  "retry_unknown_s": 300,
+  "retention_days": 7,
+  "max_rows": 20000,
+  "probe_sol": 0.1,
+  "mcap_safety": [5000, 50000000],
+  "liq_min_quote_sol": 10,
+  "round_trip_loss_pct_max": 8,
+  "max_pair_age_s": 86400,
+  "min_interval_s": {"dexscreener": 1.0, "geckoterminal": 2.5, "jupiter": 1.2, "rpc": 0.2}
+}

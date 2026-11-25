@@ -1,0 +1,27 @@
+# The desk live feed collector: one host process that writes hard-filter tickets into the Office desk db. Read-only public sources; no key needed except the optional research RPC.
+# Install: copy to ~/.config/systemd/user/, set the Python and config paths below, then
+#   systemctl --user enable --now office-desk-feed
+# Config: see config/desk_feed.example.json. Seats read the db it writes via the seat config key desk_db. One collector per db (flock on <desk_db>.lock).
+[Unit]
+Description=Office desk live feed collector
+After=network-online.target
+
+[Service]
+Type=simple
+Environment=PYTHONUNBUFFERED=1
+# Path of the Python that has sniper_office installed, and of the feed config.
+ExecStart=/usr/bin/python3 -m sniper_office.desk.feed --config /etc/myproject/desk_feed.json
+Restart=on-failure
+RestartSec=30
+Nice=10
+MemoryMax=256M
+CPUQuota=50%
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+# The desk db directory (WAL and lock files are created beside it).
+ReadWritePaths=%h/.local/share/sniper-office
+PrivateTmp=yes
+
+[Install]
+WantedBy=default.target
