@@ -189,7 +189,7 @@ class Dex:
 
 
 def recorder(tmp, dex, clock, **cfg):
-    return TK.Recorder(dict(j7_db=str(tmp / 'j7.db'), min_interval_s=0, **cfg), fetch=dex, clock=lambda: clock[0], sleep=lambda s: None)
+    return TK.Recorder(dict(dict(j7_db=str(tmp / 'j7.db'), min_interval_s=0, onchain=False), **cfg), fetch=dex, clock=lambda: clock[0], sleep=lambda s: None)
 
 
 def test_a_signal_window_records_one_tick_per_cycle_in_one_batched_request_then_closes_with_an_outcome(tmp_path):

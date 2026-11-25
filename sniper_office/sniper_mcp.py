@@ -44,7 +44,23 @@ def launch_spec(cfg):
     bwrap = shutil.which('bwrap')
     if bwrap is None:
         raise McpError('no_net_isolation')   # fail closed: without a network cut a remote-database tool could not be ruled out
-    return [bwrap, '--bind', '/', '/', '--dev', '/dev', '--proc', '/proc', '--unshare-net', '--die-with-parent'] + argv, str(path.parent)
+    root, py = path.parent, Path(argv[0]).resolve()
+    # Read-only everything; home, /run and /tmp masked, then only the source project and the interpreter's install bound back read-only.
+    # Its env files are masked, the server gets a scratch tmpfs, no network, no capabilities, its own namespaces.
+    walls = [bwrap, '--ro-bind', '/', '/', '--dev', '/dev', '--proc', '/proc', '--tmpfs', '/home', '--tmpfs', '/run', '--tmpfs', '/tmp',
+             '--ro-bind', str(root), str(root)]
+    for parent in py.parents:
+        if parent.name.startswith('versions') or (parent / 'bin').is_dir() and parent != Path('/') and str(parent).startswith(str(Path.home())):
+            walls += ['--ro-bind', str(parent), str(parent)]
+            break
+    user_site = Path.home() / '.local' / 'lib'   # the interpreter's user site-packages (the server's dependencies live there), read-only
+    if user_site.is_dir():
+        walls += ['--ro-bind', str(user_site), str(user_site)]
+    for secret in sorted(root.glob('.*env')) + [root / '.mcp.json']:
+        if secret.is_file():
+            walls += ['--ro-bind', '/dev/null', str(secret)]
+    walls += ['--unshare-all', '--cap-drop', 'ALL', '--die-with-parent', '--new-session']
+    return walls + argv, str(root)
 
 
 def session(cfg, requests):
