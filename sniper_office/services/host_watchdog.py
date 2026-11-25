@@ -106,6 +106,8 @@ def step(cfg, guard, now, *, psi=read_psi, mem=read_mem, kill=None):
             doc = dict(prior, at=now, healthy_since=guard.healthy_since)        # stays paused; the file stays fresh so a stale guard is never mistaken for it
     elif reason is None:
         doc = dict(state='ready', reason=None, at=now, guard_policy_version=POLICY)
+    elif paused_before and (prior.get('latched') is True or prior['reason'] not in AUTO_RESUME):
+        doc = dict(prior, at=now, last_reason=reason)        # a latched pause keeps its reason: a later pressure reading must not downgrade it to one that lifts by itself
     else:
         doc = dict(state='paused', reason=reason, at=now, guard_policy_version=POLICY, latched=reason not in AUTO_RESUME)
         if not paused_before and cfg.get('kill_file') and kill is not None:

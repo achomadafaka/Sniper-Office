@@ -470,3 +470,18 @@ def test_creator_tools_read_the_checkpoint_and_flag_a_stale_one(tmp_path, monkey
     assert call(t, 'creator_launches')[1]['items'] == [dict(token='0x1', block=3)]
     assert call(t, 'creator_status', which='venue')[1]['reason'] == 'checkpoint_unreadable'
     assert call(t, 'creator_status', which='bogus')[1]['reason'] == 'creator_config_unknown'
+
+
+
+def test_a_latched_pause_is_not_downgraded_by_a_later_pressure_reading(tmp_path):
+    cfg = dict(guard_file=str(tmp_path / 'g.json'))
+    g = HW.Guard(cfg)
+
+    def bad(kind):
+        raise OSError('no psi')
+    assert HW.step(cfg, g, NOW, psi=bad, mem=lambda: 1)['reason'] == 'telemetry_unknown'
+    doc = tick(cfg, g, NOW + 1, cpu=0.5)                 # a reason that could lift by itself must not replace the latched one
+    assert doc['state'] == 'paused' and doc['reason'] == 'telemetry_unknown' and doc['latched'] is True and doc['last_reason'] == 'cpu_pressure'
+    for t in range(2, 3000, 100):
+        doc = tick(cfg, g, NOW + t)
+    assert doc['state'] == 'paused' and doc['reason'] == 'telemetry_unknown'
