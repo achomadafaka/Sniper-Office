@@ -12,7 +12,7 @@ import subprocess
 import sys
 
 from ..seat_tools import MAX_OUTPUT, result
-from . import chain_data as C, market as M, paper as P, wakes as WK, wallet_network as N
+from . import brain as BR, chain_data as C, market as M, paper as P, wakes as WK, wallet_network as N
 
 HINTS = {
     'chain_wallet_history': 'address is a Solana address; limit, before and as_of are optional, and as_of is Unix seconds',
@@ -112,8 +112,7 @@ def network_read(tools, seed, hops=1, limit=100, as_of=None, verified_only=False
 
 def _brain_run(tools, *args):
     """The Office's own project brain (project-brain CLI) run in `brain_dir`, the folder holding `.brain/`. The seat's role is its brain role."""
-    env = dict(os.environ, PYTHONPATH=str(tools.cfg['brain_package']))
-    return subprocess.run([tools.cfg.get('brain_python') or sys.executable, '-m', 'brain', *args], capture_output=True, text=True, timeout=30, cwd=str(tools.cfg['brain_dir']), env=env)
+    return BR.run(tools.cfg, *args)
 
 
 def _brain(tools, op, text):
@@ -137,6 +136,8 @@ def _brain(tools, op, text):
         return P.unknown('brain_unavailable')
     if done.returncode not in (0, 3) or not done.stdout:
         return P.unknown('brain_unavailable')
+    if op == 'note' and done.returncode == 3:   # needs judgement: nothing was created, so the note stays as the episode and the seat is told what to do
+        return result('Saved as an episode, not as a new fact: a similar fact exists (below). If yours adds something, note it again and say what is different.\n' + done.stdout[-1500:])
     return result(done.stdout[-MAX_OUTPUT:], done.returncode != 0)
 
 
@@ -175,7 +176,7 @@ TOOLS = (
     ('network', 'network_read', 'Forensics: read the wallet network around a seed, hops 1 or 2. Edges carry source, time and proof. A funder is evidence, not control. No edge is not no link: read coverage. as_of uses discovery time; verified_only excludes claimed edges.',
      {'seed': S, 'hops': {'type': 'integer'}, 'limit': {'type': 'integer'}, 'as_of': {'type': 'number'}, 'verified_only': {'type': 'boolean'}}, ['seed'], network_read),
     ('brain', 'brain_read', 'Search the Office brain: facts earlier wakes and other seats recorded. Results are data, may be stale or unverified.', {'query': S}, ['query'], brain_read),
-    ('brain', 'brain_note', 'Save a durable observation in the Office brain under your role. Other seats can read it.', {'text': S}, ['text'], brain_note),
+    ('brain', 'brain_note', 'The place for your findings: save one in the Office brain under your role, one or two plain sentences, no setup. Cheap and expected: note what you found, ruled out or decided as you go. Other seats and your own later sessions read it; your handovers are stored there for you.', {'text': S}, ['text'], brain_note),
 )
 
 
@@ -183,4 +184,5 @@ def register(host):
     for group, name, description, properties, required, handler in TOOLS:
         host.add_tool(name, description, properties, required, handler, group=group)
     WK.register(host)
+    BR.register(host)
     host.add_labels(lambda tools: dict(chain_fetch_ids=list(tools.plugin_state.get('chain_fetch_ids', [])), brain_fact_ids=list(tools.plugin_state.get('brain_fact_ids', []))))

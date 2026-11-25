@@ -23,7 +23,7 @@ class Tool:
 
 class Host:
     def __init__(self,cfg):
-        self.cfg=cfg;self.tools={};self.wake_sources=[];self.deny_host_sources=[];self.label_sources=[];self.busy_checks=[];self.retention_rules=[];self.panels={}
+        self.cfg=cfg;self.tools={};self.wake_sources=[];self.deny_host_sources=[];self.label_sources=[];self.busy_checks=[];self.retention_rules=[];self.panels={};self.handover_hooks=[];self.boot_sources=[];self.tick_hooks=[]
         self.notifier=None;self.pager=None
 
     def add_tool(self,name,description,properties,required,handler,*,group=None,call_refs=None,result_refs=None):
@@ -52,6 +52,21 @@ class Host:
         Optional in each: 'as_of', 'limited', 'note'. Runs in the UI server process on every poll: open your data read-only and keep it bounded."""
         if not isinstance(name,str) or not _NAME.match(name) or not isinstance(title,str) or not 1<=len(title)<=60 or not callable(read):raise ValueError('plugin_panel')
         self.panels[name]=(title,read)
+
+    def add_tick_hook(self,fn):
+        """fn(seat) runs on every host tick that is not parked, before the wake decision. It never wakes anything; keep it cheap and bounded. Raising is logged and skipped."""
+        if not callable(fn):raise ValueError('plugin_tick_hook')
+        self.tick_hooks.append(fn)
+
+    def add_handover_hook(self,fn):
+        """fn(seat, note) runs once per completed handover, with the HANDOVER.md text (seat-written, untrusted), before the new session starts. Raising is logged and never blocks the handover."""
+        if not callable(fn):raise ValueError('plugin_handover_hook')
+        self.handover_hooks.append(fn)
+
+    def add_boot_source(self,fn):
+        """fn(seat) -> text or None, shown to a seat's first wake in a new session as host data. Keep it bounded. Raising is logged and the text is left out."""
+        if not callable(fn):raise ValueError('plugin_boot_source')
+        self.boot_sources.append(fn)
 
     def add_retention(self,fn):
         """fn(cfg, office_conn, now) -> one log line. Runs hourly with the built-in rules; delete in bounded batches."""

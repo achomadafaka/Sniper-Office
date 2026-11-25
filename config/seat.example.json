@@ -26,6 +26,7 @@
  "max_sleep_s": 3600,
  "rotate_cache_read": 800000,
  "rotate_read_per_request": 300000,
+ "rotate_after_wakes": 60,
 
  "office_db": "/var/lib/myproject/office/office.db",
  "quota_db": "/var/lib/myproject/office/quota.db",

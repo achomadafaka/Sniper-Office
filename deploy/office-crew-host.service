@@ -1,0 +1,22 @@
+# The Office side of the crew: carries crewlink messages to seat mail (waking the seat) and seat mail to the crew mailbox. A host process, not a seat.
+# Install: copy to ~/.config/systemd/user/, set the Python and config paths below, then
+#   systemctl --user enable --now office-crew-host
+# Needs the crew config with an "office" block (run/config/crewlink/sniper-office.json) and the crewlink command installed: see docs/CREW.md.
+[Unit]
+Description=Office crew bridge (crewlink mailbox <-> seat mail)
+After=network-online.target
+
+[Service]
+Type=simple
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=/srv/sniper-office/release
+WorkingDirectory=/srv/sniper-office/release
+ExecStart=/home/bigpapi/.pyenv/versions/3.13.0/bin/python3 -m sniper_office.crew_bridge --config %h/.config/crewlink/sniper-office.json
+Restart=on-failure
+RestartSec=10
+Nice=10
+MemoryMax=128M
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=default.target

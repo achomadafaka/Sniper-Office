@@ -77,13 +77,14 @@ def record_event(conn,*,epoch_id,actor_id,generation,incarnation,at,kind,state='
     return event_id
 
 
-def seat_dm(conn,*,from_actor,from_generation,from_incarnation,to_actor_id,text,now,sender_tainted=False):
-    """Seat-to-seat mail. Sender identity is the caller's bound socket identity."""
+def seat_dm(conn,*,from_actor,from_generation,from_incarnation,to_actor_id,text,now,sender_tainted=False,message_id=None):
+    """Seat-to-seat mail. Sender identity is the caller's bound socket identity. A caller-given message_id makes the send idempotent: a repeat is state 'duplicate' and mails nothing."""
     try:
         if not isinstance(text,str) or not text.strip() or len(text.encode('utf-8'))>4096:raise OperatorDmRefused('text_invalid')
     except UnicodeError:raise OperatorDmRefused('text_invalid') from None
-    message_id='seat_'+uuid.uuid4().hex
+    message_id=message_id or 'seat_'+uuid.uuid4().hex
     with S.write_transaction(conn):
+        if conn.execute('SELECT 1 FROM office_dm_events WHERE message_id=?',(message_id,)).fetchone():return dict(state='duplicate',message_id=message_id)
         seat=conn.execute('SELECT epoch_id,generation,incarnation,sealed FROM office_v2_roster WHERE actor_id=?',(to_actor_id,)).fetchone()
         if seat is None:raise OperatorDmRefused('unknown_actor')
         if seat[3]:raise OperatorDmRefused('actor_sealed')
@@ -109,14 +110,16 @@ def is_host_sender(actor):
     return actor in ('operator','crew','watch') or (isinstance(actor,str) and actor.startswith('crew:') and actor[5:] in CREW_ROLES)
 
 
-def crew_dm(conn,*,role,to_role,text,now):
-    """Host-side crew mail to one role's unsealed seats. Sender and first line both name the crew role. All or nothing on the size; a rerun mails again."""
+def crew_dm(conn,*,role,to_role,text,now,message_key=None):
+    """Host-side crew mail to one role's unsealed seats. Sender and first line both name the crew role. All or nothing on the size; a rerun mails again, unless message_key is given:
+    then each seat's message id derives from it and a rerun mails nothing twice."""
     if role not in CREW_ROLES:raise OperatorDmRefused('crew_role_unknown')
     body='CREW %s (crew, not the operator):\n%s'%(role,text)
     if not isinstance(text,str) or not text.strip() or len(body.encode('utf-8'))>4096:raise OperatorDmRefused('text_invalid')
     actors=[r[0] for r in conn.execute('SELECT actor_id FROM office_v2_roster WHERE sealed=0 AND role=?',(to_role,))]
     if not actors:raise OperatorDmRefused('unknown_actor')
-    return [seat_dm(conn,from_actor='crew:'+role,from_generation=0,from_incarnation=0,to_actor_id=a,text=body,now=now)['message_id'] for a in actors]
+    ids={a:'crew_'+hashlib.sha256((message_key+':'+a).encode()).hexdigest()[:32] if message_key else None for a in actors}
+    return [seat_dm(conn,from_actor='crew:'+role,from_generation=0,from_incarnation=0,to_actor_id=a,text=body,now=now,message_id=ids[a])['message_id'] for a in actors]
 
 
 def seat_to_operator(conn,*,from_actor,from_generation,from_incarnation,text,now,refs=()):
