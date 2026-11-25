@@ -15,6 +15,7 @@ PLUGIN_PATHS = ('sniper_office/desk/', 'tests/desk/', 'docs/DESK.md', 'deploy/of
                 'sniper_office/services/', 'tests/services/', 'docs/SERVICES.md', 'deploy/office-xcap.service', 'deploy/office-narrative.service', 'deploy/office-creator-', 'deploy/office-host-watchdog.service',
                 'config/x_receiver.example.json', 'config/narrative.example.json', 'config/creator_', 'config/services_seat.example.json', 'config/host_watchdog.example.json')
 PLUGIN_PATHS += ('sniper_office/markets/', 'tests/markets/', 'docs/MARKETS.md', 'deploy/office-markets-', 'config/markets_')    # the markets plug-in, as above
+PLUGIN_PATHS += ('sniper_office/sniper_mcp.py', 'tests/test_sniper_mcp.py', 'tests/test_skills.py', 'sniper_office/skills/')    # the source-project MCP bridge and the vetted skill texts
 PATTERN = re.compile('(?i:' + '|'.join(WORDS) + ')|' + '|'.join(CASED))
 
 

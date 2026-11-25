@@ -15,7 +15,7 @@ import subprocess
 import threading
 import uuid
 
-from . import claude_seat_auth as A,model_proxy as M,plugins as P,seat_retention as R,quota_measurement as Q,search_broker as S,seat_events as E,seat_sandbox as B,seat_tools as T
+from . import claude_seat_auth as A,model_proxy as M,plugins as P,seat_retention as R,quota_measurement as Q,search_broker as S,seat_events as E,seat_sandbox as B,seat_tools as T,skills as K
 from .supervisor import run_child
 
 LOG=logging.getLogger(__name__)
@@ -486,7 +486,7 @@ class Seat:
         tools.operator_prior=bool(self.state.get('operator_influence'));tools.on_operator_read=self._save_operator_read
         codex=self.cfg.get('family')=='codex'
         tools.start()
-        request=dict(model=self.cfg['model'],system=Path(self.cfg['prompt_file']).read_text(),session_id=self.state.get('session_id'),
+        request=dict(model=self.cfg['model'],system=K.system_prompt(self.cfg),session_id=self.state.get('session_id'),
                      prompt=extra or self._prompt(wake_type,note,new_session),deadline_s=self.cfg['wake_deadline_s'],max_turns=self.cfg['max_turns'],effort=self.cfg.get('effort','medium'))
         if codex:request['account_id']=M.read_token(self.cfg['codex_auth'])[1]
         argv=B.unit_args(unit,runtime_s=self.cfg['wake_deadline_s']+30)+(B.codex_args if codex else B.harness_args)(self.actor,self.cfg['state_dir'],bridge=self.bridge)+[
