@@ -289,6 +289,20 @@ def test_docs_get_and_head_pass(tmp_path,monkeypatch,method):
     assert seen[0].startswith(method+b' /guide')
 
 
+def test_docs_request_forwards_only_plain_read_headers(tmp_path,monkeypatch):
+    """A credential can ride in any header, so the read-only exception forwards a fixed list and drops the rest."""
+    _,seen,p=_docs_proxy(tmp_path,monkeypatch)
+    try:
+        t=_tls(p,tmp_path,'docs.vendor.test','docs.vendor.test')
+        t.sendall(b'GET /guide?page=2 HTTP/1.1\r\nHost: docs.vendor.test\r\nAccept: text/html\r\nX-Api-Key: k-123\r\nProxy-Authorization: Basic abc\r\nX-Session-Token: s-456\r\nReferer: https://elsewhere.test/secret\r\nUser-Agent: seat\r\n\r\n')
+        assert b'200 OK' in _read(t);t.close()
+    finally:p.stop()
+    sent=seen[0].lower()
+    assert sent.startswith(b'get /guide?page=2') and b'accept: text/html' in sent and b'user-agent: seat' in sent and b'host: docs.vendor.test' in sent
+    for leaked in (b'x-api-key',b'k-123',b'proxy-authorization',b'x-session-token',b's-456',b'referer',b'elsewhere'):
+        assert leaked not in sent
+
+
 @pytest.mark.parametrize('request_bytes',[
     b'POST /x HTTP/1.1\r\nHost: docs.vendor.test\r\nContent-Length: 0\r\n\r\n',
     b'PUT /x HTTP/1.1\r\nHost: docs.vendor.test\r\n\r\n',

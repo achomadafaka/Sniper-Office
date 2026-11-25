@@ -30,6 +30,9 @@ def load_denylist(path):
     return frozenset(json.loads(raw)['domains']),hashlib.sha256(raw).hexdigest()
 
 
+READ_ONLY_HEADERS=frozenset({b'host',b'accept',b'accept-language',b'accept-encoding',b'user-agent',b'range',b'if-none-match',b'if-modified-since',b'cache-control',b'pragma'})
+
+
 def load_read_only_hosts(path):
     """Exact hosts a domain on the denylist still allows: GET and HEAD only, no credentials, tool sandbox only. Never a wildcard."""
     hosts=json.loads(open(path,'rb').read()).get('read_only_host_exceptions',[])
@@ -282,6 +285,9 @@ class Proxy:
         if len(body)>length:raise netguard.Denied('request_framing')
         if self._read_only(host) and (method not in (b'GET',b'HEAD') or length or body or any(n in (b'authorization',b'cookie') for n,_ in headers)):
             raise netguard.Denied('denied_read_only_host')
+        if self._read_only(host):
+            # Naming two credential headers is not enough: a key can ride in any header. Only plain read headers go upstream; the rest are dropped.
+            headers=[(n,v) for n,v in headers if n in READ_ONLY_HEADERS]
         refusal=self.decide(host)
         if refusal:raise netguard.Denied(refusal)
         upstream=netguard.connect(replace(target,tls=True),time.monotonic()+10)
