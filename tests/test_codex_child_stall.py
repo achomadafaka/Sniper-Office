@@ -18,3 +18,13 @@ def test_relay_stall():
     # normal end
     r=C.relay({},iter([ev(type='turn.completed',usage={'input_tokens':1})]),idle_s=0.3)
     assert r==(None,{'input_tokens':1,'output_tokens':None,'cache_read_input_tokens':None,'cache_creation_input_tokens':None},False,False),r
+
+
+def test_non_tool_item_does_not_extend_the_limit():
+    import json,time
+    import sniper_office.codex_child as C
+    class Slow:
+        def __iter__(s):
+            yield json.dumps(dict(type='item.started',item=dict(id='r',type='reasoning')))
+            time.sleep(2)
+    assert C.relay({},Slow(),idle_s=0.3,tool_s=5)[3] is True

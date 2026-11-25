@@ -49,6 +49,7 @@ def usage_of(raw):
 
 IDLE_S=900   # no CLI event and no tool call in flight: the CLI is stuck, not working (2026-11-25 hang after a failed MCP start)
 TOOL_S=3900  # a tool call in flight may take up to the MCP tool timeout
+TOOL_ITEMS=frozenset({'mcp_tool_call','command_execution','web_search','file_change'})   # only these are work in flight; other started items get the idle limit
 
 
 def lines(stream,idle_s=IDLE_S,tool_s=TOOL_S,busy=lambda:False):
@@ -75,7 +76,7 @@ def relay(doc,stream,**limits):
         except ValueError:continue
         kind=event.get('type') if isinstance(event,dict) else None
         item=event.get('item') if isinstance(event,dict) and isinstance(event.get('item'),dict) else {}
-        if kind=='item.started' and item.get('id'):open_items.add(item['id'])
+        if kind=='item.started' and item.get('id') and item.get('type') in TOOL_ITEMS:open_items.add(item['id'])
         elif kind=='item.completed':open_items.discard(item.get('id'))
         if kind=='thread.started':
             session=event.get('thread_id');emit('session',session_id=session)
