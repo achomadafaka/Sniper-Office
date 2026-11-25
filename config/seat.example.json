@@ -1,0 +1,48 @@
+{
+ "actor": "ag_0123456789abcdef",
+ "role": "reviewer",
+ "epoch": "first-run",
+ "generation": 1,
+ "family": "claude",
+ "model": "claude-sonnet-5-5",
+ "effort": "medium",
+ "sdk_version": "0.2.175",
+ "prompt_file": "/etc/myproject/prompts/reviewer.md",
+
+ "account_alias": "claude-main",
+ "account_poller": true,
+ "account_poll_s": 300,
+ "account_max_age_s": 900,
+ "claude_credentials": "/home/me/.claude/.credentials.json",
+
+ "uncapped": false,
+ "wakes_per_hour": 6,
+ "daily_limit": null,
+ "absolute_ceiling": 200000,
+ "usage_scope": "per_wake",
+ "wake_deadline_s": 3600,
+ "max_turns": 200,
+ "default_sleep_s": 900,
+ "max_sleep_s": 3600,
+ "rotate_cache_read": 800000,
+ "rotate_read_per_request": 300000,
+
+ "office_db": "/var/lib/myproject/office/office.db",
+ "quota_db": "/var/lib/myproject/office/quota.db",
+ "host_state": "/var/lib/myproject/office/seat-reviewer.json",
+ "ca_dir": "/var/lib/myproject/office/ca/reviewer",
+ "proxy_log_dir": "/var/lib/myproject/office/proxy/reviewer",
+ "workspace": "/var/lib/sniper-office/reviewer/workspace",
+ "state_dir": "/var/lib/sniper-office/reviewer/state",
+
+ "denylist": "/etc/myproject/egress_denylist.json",
+ "search_policy": "/etc/myproject/search.json",
+ "data_sources": "/etc/myproject/data_sources.json",
+
+ "plugins": ["myproject.office_plugin"],
+ "tool_groups": [],
+ "denied_tools": [],
+ "heartbeat": null,
+ "prompt_playbook": true,
+ "prompt_lessons": false
+}

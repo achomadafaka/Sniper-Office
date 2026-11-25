@@ -1,0 +1,23 @@
+# One seat's host process. Install: copy to ~/.config/systemd/user/, set the two paths below, then
+#   systemctl --user enable --now office-seat@reviewer
+# The instance name picks the config file. After a publish, restart the unit.
+[Unit]
+Description=Office seat host %i
+After=network-online.target
+
+[Service]
+Type=simple
+Environment=PYTHONUNBUFFERED=1
+# Path of the Python that has sniper_office (and your plug-in) installed, and of your seat configs.
+ExecStart=/usr/bin/python3 -m sniper_office.seat_main --config /etc/myproject/seat_%i.json
+# On any exit, crash included: a wake runs under the sandbox user's manager and outlives this process.
+ExecStopPost=/usr/bin/python3 -m sniper_office.seat_main --config /etc/myproject/seat_%i.json --stop-children
+Restart=on-failure
+RestartSec=30
+Nice=19
+IOSchedulingClass=idle
+MemoryMax=512M
+CPUQuota=100%
+
+[Install]
+WantedBy=default.target

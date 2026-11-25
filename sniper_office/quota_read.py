@@ -50,3 +50,28 @@ def poll_codex(*, popen=subprocess.Popen, timeout_s=10):
             finally:
                 for stream in (child.stdin,child.stdout):
                     if stream is not None:stream.close()
+
+
+def poll_claude(credentials,*,open_url=None):
+    """One usage read with the access token already on this host. Never refreshes it. Returns (document, None) or (None, reason)."""
+    import urllib.error,urllib.request
+    open_url=open_url or urllib.request.urlopen
+    try:
+        with open(credentials,'rb') as fh:
+            raw=fh.read(65537)
+        if len(raw)>65536:return None,'invalid'
+        token=json.loads(raw).get('claudeAiOauth',{}).get('accessToken')
+        if not isinstance(token,str) or not token:return None,'auth'
+        request=urllib.request.Request('https://api.anthropic.com/api/oauth/usage',headers={
+            'Authorization':'Bearer '+token,'anthropic-beta':'oauth-2025-04-20','Accept':'application/json'})
+        with open_url(request,timeout=10) as response:
+            raw=response.read(100001)
+        if len(raw)>100000:return None,'invalid'
+        doc=json.loads(raw)
+        return (doc,None) if isinstance(doc,dict) else (None,'invalid')
+    except urllib.error.HTTPError as exc:
+        return None,'rate_limited' if exc.code==429 else 'auth' if exc.code in (401,403) else 'transport'
+    except TimeoutError:
+        return None,'timeout'
+    except (OSError,ValueError,AttributeError,TypeError):
+        return None,'transport'

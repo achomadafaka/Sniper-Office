@@ -1,0 +1,3 @@
+{"sources": {"main": "/var/lib/myproject/app.db"},
+ "tables": {"tickets": {"source": "main", "time_column": "created_at", "time_kind": "iso", "columns": ["id", "state", "created_at"]},
+            "events": {"source": "main", "source_table": "event_log", "time_column": "at", "time_kind": "epoch", "columns": ["at", "kind", "detail"]}}}

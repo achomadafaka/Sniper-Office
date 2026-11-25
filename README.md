@@ -56,11 +56,16 @@ python3 -m pytest
 | `launcher_diagnostics` | Redaction of credentials from captured child output. |
 | `config` | Loads one JSON file, optionally pinned by SHA-256, and applies it to the modules above. |
 
-Seat runtime parts (stage 2a). These are the building blocks for long-running agent sessions in a sandbox; the
-seat host and tool server that tie them together are not here yet.
+Seat runtime: long-running agent sessions in a sandbox. `docs/SETUP.md` is the host setup guide.
 
 | Module | What it holds |
 |---|---|
+| `seat_main` | Entry point for one seat's host process: `python3 -m sniper_office.seat_main --config seat.json`. |
+| `seat_host` | When a seat wakes, what it is told, its budget, session rotation and handover. |
+| `seat_tools` | The tool server a seat talks to. Built-in tools: `shell`, `browse`, `web_search`, `db_read`, `mail_send`, `mail_read`, `sleep`, `request`, `notify_operator`. |
+| `plugins` | How a project adds its own tools, wake reasons, deny hosts, labels, retention rules and notifications. |
+| `seat_db` | `db_read`: one SELECT over copies of allowed tables and columns, rows up to now only. |
+| `seat_publish` | Publishes the package, a project tree and a Python runtime for the sandbox user; refuses secrets. |
 | `seat_sandbox` | `bwrap` and `systemd-run` arguments: one sandbox that holds the model credential and no tools, one that holds tools and no credential. Neither has a network route out. |
 | `egress_proxy`, `netguard` | Host-side proxy on a Unix socket: public addresses only, pinned IPs, a host denylist, per-host rate limits. |
 | `model_proxy` | Host-side proxy for a model provider; the sandbox holds a placeholder token and the real one stays on the host. |
@@ -116,11 +121,21 @@ A project that used the source package must set these in its config to get the o
 - `runtime_observations.Buffer` took a second database and read order rows from it. It now takes `hooks`:
   callables `(buffer, now)` that run inside the flush transaction.
 - The ticket delivery status for a queued hand-over is `crew_queued`.
+- The tool server had about 30 project tools built in. They are gone; a project registers its own through `plugins`.
+- The seat host woke on project events and read a project ledger before rotating. Those are `add_wake_source` and
+  `add_busy_check` now. The guard on another process's heartbeat is optional (`heartbeat`), its reasons are
+  `guard_heartbeat_unreadable`, `guard_not_ok`, `guard_heartbeat_stale`, and the key it reads is `heartbeat_ok_key`.
+- `db_read` took a fixed table list. It takes a spec file (`data_sources`) and no longer has per-table notes,
+  day-partitioned files or text truncation markers; a project that needs those replaces the tool.
+- Retention no longer touches project tables; `add_retention` adds rules. The page log is kept 90 days.
+- The entry point is `python3 -m sniper_office.seat_main`. The publish step always places this package in the release.
 - Memory entries are excluded when they share a `source_keys` value with the candidate; the default keys are
   `subject`, `creator`, `minute`.
 
 ## Not included
 
-The seat host and tool server (with the plug-in loader), the read-only database tool, the publish step, service
-units, the one-shot model launcher, organisation and epoch management, evaluation and promotion, and the web UI.
-Those are later stages of the plan.
+The one-shot model launcher, organisation and epoch management, evaluation and promotion, and the web UI. Those are
+later stages of the plan.
+
+Not yet proven: a full wake from this package on a real host (publish, sandbox, model call, tool call, mail). The
+parts are tested, and the sandbox tests run for real, but the end-to-end run has not been done.

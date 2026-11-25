@@ -79,73 +79,26 @@ def over_cap(cfg):
     return None
 
 
-def prune_orphan_labels(store,ledger_path,*,now):
-    """Attempts no receipt ever claimed. Off the order path, and only past a week, so a crash's retry still finds its own."""
-    old=store.execute('SELECT order_id,decision_hash FROM office_v2_order_labels WHERE at<? LIMIT ?',(now-7*DAY,BATCH)).fetchall()
-    ledger=sqlite3.connect(Path(ledger_path).resolve().as_uri()+'?mode=ro',uri=True,timeout=1.)
-    try:
-        # Only this batch's order ids, by the receipts' order id: never the whole table into memory.
-        kept=set()
-        ids=sorted({r[0] for r in old})
-        for start in range(0,len(ids),500):
-            chunk=ids[start:start+500]
-            kept.update(r[0] for r in ledger.execute('SELECT judgements_hash FROM decision_receipts WHERE order_id IN (%s)'%','.join('?'*len(chunk)),chunk))
-    finally:ledger.close()
-    gone=[r for r in old if r[1] not in kept]
-    with store:store.executemany('DELETE FROM office_v2_order_labels WHERE order_id=? AND decision_hash=?',gone)
-    return len(gone)
+NOTIFICATION_DAYS=90
 
 
-def prune_snapshots(store,*,now):
-    """Kept for the epoch's analysis window: until 30 days after it seals. An open epoch's rows are never touched."""
-    return store.execute("DELETE FROM office_v2_book_snapshots WHERE rowid IN (SELECT s.rowid FROM office_v2_book_snapshots s JOIN epochs e ON e.id=s.epoch_id "
-                         "WHERE json_extract(e.payload_json,'$.closed_at')<? LIMIT ?)",(now-30*DAY,BATCH)).rowcount
+def prune_notifications(office,*,now):
+    """The page log. The inbox text it points at is a mailbox event and goes by the event rule."""
+    if not office.execute("SELECT 1 FROM sqlite_master WHERE name='office_v2_notifications'").fetchone():return 0
+    return office.execute('DELETE FROM office_v2_notifications WHERE rowid IN (SELECT rowid FROM office_v2_notifications WHERE sent_at<? LIMIT ?)',(now-NOTIFICATION_DAYS*DAY,BATCH)).rowcount
 
 
-def prune_market(path,office,*,now):
-    """Calls 30 days but never into an unexpired epoch, cache 1 day, fetches until 30 days after their epoch seals. Fetches carry no epoch id, so they go by when a seat saw them: before the newest epoch sealed over 30 days ago, and before the start of every epoch still open or sealed more recently. Any such epoch with no recorded start deletes no fetch."""
-    closed=office.execute("SELECT max(json_extract(payload_json,'$.closed_at')) FROM epochs WHERE json_extract(payload_json,'$.closed_at')<?",(now-30*DAY,)).fetchone()[0]
-    starts=[office.execute('SELECT min(at) FROM office_v2_changes WHERE epoch_id=?',(r[0],)).fetchone()[0]
-            for r in office.execute("SELECT id FROM epochs WHERE json_extract(payload_json,'$.closed_at') IS NULL OR json_extract(payload_json,'$.closed_at')>=?",(now-30*DAY,)).fetchall()]
-    cut=None if closed is None or any(x is None for x in starts) else min([closed]+starts)
-    calls_cut=None if any(x is None for x in starts) else min([now-30*DAY]+starts)
-    if cut is not None:   # the seats' own logs, on the same horizon as fetches; the inbox text they point at isn't pruned at all
-        for table,column in (('office_v2_notifications','sent_at'),('office_v2_results_reads','last_at')):
-            if office.execute("SELECT 1 FROM sqlite_master WHERE name=?",(table,)).fetchone():
-                office.execute('DELETE FROM %s WHERE rowid IN (SELECT rowid FROM %s WHERE %s<? LIMIT ?)'%(table,table,column),(cut,BATCH))
-    chain=Path(path).with_name('chain.db')
-    if chain.exists():
-        other=sqlite3.connect(chain,timeout=2,isolation_level=None)
-        try:
-            if calls_cut is not None:other.execute('DELETE FROM calls WHERE rowid IN (SELECT rowid FROM calls WHERE at<? LIMIT ?)',(calls_cut,BATCH))
-            other.execute('DELETE FROM cache WHERE rowid IN (SELECT rowid FROM cache WHERE expires<? LIMIT ?)',(now,BATCH))
-            if cut is not None:
-                other.execute('DELETE FROM fetches WHERE rowid IN (SELECT rowid FROM fetches WHERE shown_at<? LIMIT ?)',(cut,BATCH))
-                # An alert goes by when seats were told; never one still waiting to be mailed.
-                for table,column in (('watch_alerts','mailed_at'),('watch_seen','at'),('watch_passes','at')):
-                    if other.execute("SELECT 1 FROM sqlite_master WHERE name=?",(table,)).fetchone():
-                        other.execute('DELETE FROM %s WHERE rowid IN (SELECT rowid FROM %s WHERE %s<? LIMIT ?)'%(table,table,column),(cut,BATCH))
-        finally:other.close()
-    if not Path(path).exists():return 0,0,0
-    conn=sqlite3.connect(path,timeout=2,isolation_level=None)
-    try:
-        calls=conn.execute('DELETE FROM calls WHERE rowid IN (SELECT rowid FROM calls WHERE at<? LIMIT ?)',(calls_cut,BATCH)).rowcount if calls_cut is not None else 0
-        cache=conn.execute('DELETE FROM cache WHERE rowid IN (SELECT rowid FROM cache WHERE at<? LIMIT ?)',(now-DAY,BATCH)).rowcount
-        fetches=conn.execute('DELETE FROM fetches WHERE rowid IN (SELECT rowid FROM fetches WHERE shown_at<? LIMIT ?)',(cut,BATCH)).rowcount if cut is not None else 0
-        return calls,cache,fetches
-    finally:conn.close()
-
-
-def run(cfg,office,quota,*,now,current=None):
+def run(cfg,office,quota,*,now,current=None,extra=()):
+    """Every writer the seat runtime has. extra: a plug-in's own rules, callables (cfg, office, now) -> one log line; a failing one is reported and the rest still run."""
     lines=[]
-    try:lines.append('market_deleted=%d,%d,%d'%prune_market(Path(cfg['office_db']).parent/'v2/market.db',office,now=now))
-    except (OSError,sqlite3.Error) as exc:lines.append('market_prune_failed=%s'%type(exc).__name__)
-    if cfg.get('ledger_db'):lines.append('book_snapshots_deleted=%d'%prune_snapshots(office,now=now))
     try:S.from_config(cfg).prune(now);lines.append('search_pruned=True')
     except (OSError,ValueError,S.sqlite3.Error):lines.append('search_pruned=False')
-    if cfg.get('ledger_db') and Path(cfg['ledger_db']).exists():lines.append('orphan_labels_deleted=%d'%prune_orphan_labels(office,cfg['ledger_db'],now=now))
     lines.append('events_deleted=%d'%prune_events(office,now=now))
+    lines.append('notifications_deleted=%d'%prune_notifications(office,now=now))
     lines.append('logs_deleted=%d'%prune_logs(cfg['proxy_log_dir'],now=now))
     lines.append('sessions_ok=%s'%prune_sessions(cfg['state_dir'],current=current))
     lines.append('quota_deleted=%s'%Q.prune(quota,now=now))
+    for rule in extra:
+        try:lines.append(str(rule(cfg,office,now))[:200])
+        except Exception as exc:lines.append('plugin_retention_failed=%s'%type(exc).__name__)
     return lines

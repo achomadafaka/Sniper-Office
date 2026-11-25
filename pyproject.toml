@@ -14,7 +14,7 @@ test = ["pytest", "cryptography"]
 seats = ["cryptography"]
 
 [tool.setuptools]
-packages = ["sniper_office"]
+packages = ["sniper_office", "sniper_office.tools"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
