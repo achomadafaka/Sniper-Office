@@ -21,7 +21,7 @@
     let end = 0;
     for (const match of source.matchAll(addressPattern)) {
       const id = match[0];
-      node.append(plain(source.slice(end, match.index)), plain(id));
+      node.append(plain(source.slice(end, match.index)), window.OfficeNames ? window.OfficeNames.scrub(id) : plain(id));
       if (node.tagName !== 'BUTTON') {
         const copy = document.createElement('button');
         copy.type = 'button';
@@ -564,7 +564,7 @@
     return block(...series.map(chart => {
       const bars = (chart.bars ?? []).filter(bar => Number.isFinite(bar.close));
       const item = section(`${text(chart.symbol)} · ${text(chart.source)}`,
-        el('p', [age(chart.observed_at), Number.isFinite(chart.interval_s) ? `${chart.interval_s} s bars` : null].filter(Boolean).join(' · ')));
+        el('p', [age(chart.observed_at), Number.isFinite(chart.interval_s) ? `${Math.round(chart.interval_s)} s bars` : null].filter(Boolean).join(' · ')));
       if (bars.length < 2) {
         item.append(el('p', missing(chart.reason) ? 'Fewer than two closing prices were saved.' : chart.reason));
         return item;

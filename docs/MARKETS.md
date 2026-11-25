@@ -103,3 +103,26 @@ SQL for `floor/sources.json` can read the same tables directly: `mk_news`, `mk_r
 1. Copy `config/markets_<name>.example.json` to `run/config/markets_<name>.json` for polymarket, perps, stocks, news, sports, intel_hl, books; set `markets_db`, `ledger_db`.
 2. Copy the units to `~/.config/systemd/user/`, set the paths, `systemctl --user enable --now office-markets-feed@{polymarket,perps,stocks,news,sports,books} office-markets-intel-hl`.
 3. Seats: `python3 -m sniper_office.markets.seatgen --head run/config/seat_head.json --out-dir run/config` writes `seat_<role>.json` for newsdesk, pm_trader, pm_critic, perps_trader, stocks_trader, meme_scout, explorer, coach (codex keys copied from the head, actor `ag_`+16 hex, kept on rerun) and prints the roster rows to insert into `office_v2_roster`; copy `sniper_office/markets/prompts/<role>.md` to `run/config/prompts/`; merge `config/markets_data_sources.example.json` into the `data_sources` file; create each seat's workspace and state directories as for the others.
+
+## The floor's newer rooms
+
+`floor/routes.py` (loaded by `ui.py` from the floor folder, see `docs/UI.md` 10.1) and `floor/static/office-live.js` fill every room from a real source and say unknown, or empty, when the source is missing. All text from feeds and seats goes in with `textContent`.
+
+| room | panels | read from |
+|---|---|---|
+| Newsroom | stories (routes, duplicates folded), debates, news calls, calls on stories, feeds | `GET /api/office/markets` -> `api.newsroom` |
+| Situation | the world map: stories with places, pulsing pins | `api.situation` (the existing map component) |
+| Sports | games, de-vigged lines, edges, feed | `api.sports` |
+| Strategy Lab | strategies with verdicts, totals by lane | `api.strategy_lab` |
+| Paper Labs | news-call lab, every book, lane totals | `api.paper_labs` |
+| Explorer | briefs, leads, wallet findings, creator launches | `api.explorer`; `sources.json` `wallet_findings` (`--db wallet=`, default `wallet_network.db`); `/api/office/services` (creator checkpoint, `--creator-dir`) |
+| Memes | meme candidates, narrative guesses, launch matches, X mentions | `api.meme_candidates`; `sources.json` `narrative_*` (`narrative.db`), `x_mentions` (`x.db`) |
+| Coach and skills, Video rule lab | lessons, every skill version, reviews; rules under test | `api.coach`, `api.video_lab` |
+| Control | host guard file (`--guard-file`), systemd unit states, J7 listener liveness (newest stored signal: the listener keeps no status table), tick recorder, ticks resolution, crew bridge cursor, creator collector, markets feed health, timed jobs, book halt buttons, operator note | `GET /api/office/services`, `api.control`; writes `POST /api/markets/halt` and `/api/markets/say` (token; the page asks for it) |
+| Trading | all books with realized and unrealized PnL (the sum is in the header), copy desk positions with live charts and tp/sl lines, J7 signals with the copy desk's decision, copy desk orders and fills, Polymarket, perps and stocks books, the memecoin judges' ledgers | `GET /api/office/live` (about once a second), `api.paper_labs`, `sources.json` `orders`, `requests`, `outcomes` |
+
+`GET /api/office/live[?since=T]`: the J7 book rows and open positions (`desk_live_pnl`), tp/sl from each order's frozen policy, the signals of the last hour, and the 1 s ticks of every coin shown newer than `since`; the page rewrites every live value in place. The rails act on the net exit value, so the tp and sl lines on a chart are drawn from the entry price and are approximate. The provider's price changes about every 30 s although we poll each second; the page prints the measured gaps. A book with an open position it could not price has no unrealized figure, and the header total says so instead of counting zero.
+
+Animations (skipped under `prefers-reduced-motion`): a J7 buy pings the copy desk (pulse ring, bubble with trader, chain, coin, size) and goes to the top of the live feed; a routed story flies as a card from the Newsroom to its room; mail flies as an envelope from the sender's desk to the receiver's (crew mail starts at Control).
+
+Coins are shown as `Name ($SYMBOL)`, with the short address and a copy button as a small second detail. `GET /api/office/token-names?ids=chain:mint,...` answers from J7 signal symbols and the narrative launch table first, then from a host-side cache table (`--names-db`, default `token_names.db` beside the office store) filled by one DexScreener `tokens/v1` lookup at a time on a background thread (https only, one host, no redirects, at most one request per 1.2 s, a miss retried after 15 minutes). Provider text is cleaned and capped on the host and again in the page; seats never read this table.

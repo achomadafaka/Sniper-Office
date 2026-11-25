@@ -1,29 +1,13 @@
 {
  "rooms": {
-  "newsroom": [
-   "scout"
-  ],
-  "research": [
-   "researcher"
-  ],
-  "explorer": [
-   "forensics"
-  ],
-  "memes": [
-   "narrative"
-  ],
-  "debate": [
-   "judge",
-   "judge_gpt"
-  ],
-  "decision": [
-   "head"
-  ],
-  "trading": [
-   "judge",
-   "judge_gpt"
-  ],
-  "coach": [],
+  "newsroom": ["scout", "newsdesk", "narrative"],
+  "research": ["researcher"],
+  "explorer": ["forensics", "researcher"],
+  "memes": ["narrative"],
+  "debate": ["judge", "judge_gpt", "pm_trader"],
+  "decision": ["head"],
+  "trading": ["copy_desk", "perps_trader", "stocks_trader", "pm_trader", "judge", "judge_gpt"],
+  "coach": ["coach"],
   "control": [],
   "situation": [],
   "strategies": [],

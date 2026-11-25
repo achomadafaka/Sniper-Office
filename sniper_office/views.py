@@ -628,12 +628,13 @@ SOURCE_ROWS = 400
 SOURCE_DBS = ('office', 'quota', 'ledger', 'sibling')
 
 
-def source_queries(doc):
+def source_queries(doc, names=()):
     """The floor project's own read-only queries, `sources.json` in its folder: {"queries": {name: {db, sql, params?, limit?}}}. db is office, quota, ledger (every --ledger-db) or sibling (the file named by `file`, next to the office store: a collector's database that may not exist yet). `sql` may be a list of variants: the first one a database accepts is the one run on it (a ledger written by an older schema).
+    `names` are the project databases the floor folder registered (see _paths); any other db name is refused.
     A query with `params` is run by name from the page with those query-string values bound, in order; one without runs with every page read. The SQL is the project's, like a plugin."""
     queries = doc.get('queries') if isinstance(doc, dict) else None
     if not isinstance(queries, dict) or not all(
-            isinstance(q, dict) and q.get('db') in SOURCE_DBS and isinstance(q.get('sql'), (str, list)) and all(isinstance(t, str) and t.lstrip().upper().startswith(('SELECT', 'WITH')) for t in ([q['sql']] if isinstance(q.get('sql'), str) else q['sql']))
+            isinstance(q, dict) and q.get('db') in (*SOURCE_DBS, *names) and isinstance(q.get('sql'), (str, list)) and all(isinstance(t, str) and t.lstrip().upper().startswith(('SELECT', 'WITH')) for t in ([q['sql']] if isinstance(q.get('sql'), str) else q['sql']))
             and all(t in ('text', 'real', 'int') for t in (q.get('params') or {}).values())
             and (q['db'] != 'sibling' or isinstance(q.get('file'), str) and re.fullmatch(r'[A-Za-z0-9_-][A-Za-z0-9_.-]{0,63}', q['file'])) for q in queries.values()):
         raise ValueError('sources.json must be {"queries": {name: {"db": office|quota|ledger, "sql": "SELECT ...", "params": {name: text|real|int}}}}')
@@ -666,25 +667,28 @@ def _run(paths, spec, args=()):
     return rows if answered else None
 
 
-def _paths(spec, office_db, quota_db, ledgers):
+def _paths(spec, office_db, quota_db, ledgers, extra=None):
+    """`extra` maps a project database name to its path (the page server's flags or the floor's routes module); a name with no path has no database."""
     if spec['db'] == 'sibling':
         return [str(Path(office_db).resolve().parent / spec['file'])]
+    if spec['db'] not in SOURCE_DBS:
+        return [(extra or {})[spec['db']]] if (extra or {}).get(spec['db']) else []
     return {'office': [office_db], 'quota': [quota_db] if quota_db else [], 'ledger': list(ledgers)}[spec['db']]
 
 
-def sources(queries, office_db, quota_db, ledgers):
+def sources(queries, office_db, quota_db, ledgers, extra=None):
     """Every parameterless project query: {name: {state, rows}}. Unknown, with the reason, when no database answers."""
     out = {}
     for name, spec in queries.items():
         if spec.get('params'):
             continue
-        paths = _paths(spec, office_db, quota_db, ledgers)
+        paths = _paths(spec, office_db, quota_db, ledgers, extra)
         rows = _run(paths, spec) if paths else None
         out[name] = dict(state='known', rows=rows) if rows is not None else dict(state='unknown', rows=[], reason='no_database' if not paths else 'unreadable')
     return out
 
 
-def query(queries, name, values, office_db, quota_db, ledgers):
+def query(queries, name, values, office_db, quota_db, ledgers, extra=None):
     """One parameterised project query by name. ValueError for an unknown name or a missing or malformed value."""
     spec = queries.get(name)
     if spec is None or not spec.get('params'):
@@ -697,7 +701,7 @@ def query(queries, name, values, office_db, quota_db, ledgers):
         args.append(raw if kind == 'text' else int(raw) if kind == 'int' else float(raw))
         if kind == 'real' and not math.isfinite(args[-1]):
             raise ValueError('param_invalid')
-    rows = _run(_paths(spec, office_db, quota_db, ledgers), spec, args)
+    rows = _run(_paths(spec, office_db, quota_db, ledgers, extra), spec, args)
     return dict(state='known' if rows is not None else 'unknown', name=name, rows=rows or [])
 
 
@@ -712,12 +716,12 @@ def operator_chat(office_db, quota_db, *, now, layout=NO_ROOMS):
     return dict(status='ok', asks=asks, messages=messages, open_by_seat={}, damaged_rows=0)
 
 
-def newsroom(office_db, quota_db, *, now, ledgers=(), layout=NO_ROOMS, queries=None):
+def newsroom(office_db, quota_db, *, now, ledgers=(), layout=NO_ROOMS, queries=None, extra=None):
     """What the floor page draws: seats by role with their real state, the rooms they sit in, a live feed of mail, requests, wakes and tool calls, and the paper book.
     Everything this store does not hold is absent, not zero: the page says unknown."""
     feed = floor_feed(office_db, quota_db, now=now, limit=200)
     out = dict(state=feed['state'], as_of=feed['as_of'], office=dict(state='unknown', epoch=None, heartbeat_at=None), rooms={r: [] for r in layout['rooms']}, seats=None, activity=None, mail=None,
-               requests=None, stats=None, tasks=None, sources=sources(queries or {}, office_db, quota_db, ledgers) if _finite(now) else {},
+               requests=None, stats=None, tasks=None, sources=sources(queries or {}, office_db, quota_db, ledgers, extra) if _finite(now) else {},
                book=book(ledgers, now=now) if _finite(now) else dict(state='unknown', reason='clock_unknown', books=[], last_closed=[]))
     if feed['seats']['state'] != 'known':
         return out
@@ -757,7 +761,7 @@ def newsroom(office_db, quota_db, *, now, ledgers=(), layout=NO_ROOMS, queries=N
         activity.append(dict(kind=kind, room=room_of(e['actor_id']), item_id=e['event_id'], at=e['corrected_at'], title=title, seat=named(e['actor_id'])))
     mail = [dict(**{'from': named(m['from_actor_id']), 'to': named(m['to_actor_id'])}, at=m['created_at'], text=_title(m['text'], 600), id=m['message_id']) for m in feed['mail']['items']]
     for m, raw in zip(mail, feed['mail']['items']):
-        activity.append(dict(kind='mail', room=room_of(raw['from_actor_id'], raw['to_actor_id']), item_id=m['id'], at=m['at'], title='%s to %s: %s' % (m['from'], m['to'], _title(m['text'], 100)), seat=m['to'] if m['from'] == 'operator' else m['from']))
+        activity.append(dict(kind='mail', room=room_of(raw['from_actor_id'], raw['to_actor_id']), item_id=m['id'], at=m['at'], title='%s to %s: %s' % (m['from'], m['to'], _title(m['text'], 100)), seat=m['to'] if m['from'] == 'operator' else m['from'], **{'from': m['from'], 'to': m['to']}))
     activity.sort(key=lambda e: e['at'], reverse=True)
     requests = [dict(seat=named(q['actor_id']), at=q['corrected_at'], text=_title(q['text'], 600)) for q in feed['questions']['items']]
     out.update(tasks=[dict(seat=named(t['actor_id']), **{k: t[k] for k in ('task_id', 'status', 'title', 'note')}) for t in feed['tasks']['items']] if feed['tasks']['state'] != 'unknown' else None,
@@ -841,3 +845,4 @@ def clear_park(office_db, quota_db, *, actor_id, reason, now):
     except sqlite3.Error as exc:
         return dict(state='refused', reason='store_unavailable:' + type(exc).__name__)
     return dict(state='cleared', actor_id=actor_id)
+

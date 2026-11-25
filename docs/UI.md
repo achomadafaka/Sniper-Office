@@ -161,3 +161,9 @@ The project's room table (which seats sit where, and what each room is filled fr
 Header cells with no data here stay and say unknown. The camera, pan and zoom building of the source project is not part of the source's own Office page (it is loaded only by an older view), so it is not here.
 
 What this store holds nothing for shows as unknown or empty, never as a number. The project's seat mapping and what its page leaves out are in the plug-in's document (`docs/` folder, the file named after the plug-in).
+
+### 10.1 The floor folder's own server side
+
+Besides `rooms.json` and `sources.json`, a floor folder may hold `routes.py` (trusted code, read once at start, like a plug-in; it is never served). `databases(cfg)` names the project databases (`sources.json` `"db"` may then be any of those names, or `office`, `quota`, `ledger`, `sibling`; a name with no path reads as unknown), and `routes(cfg, databases)` returns `(gets, posts)`: `{path: fn(query, now)}` and `{path: (exact body keys, fn(body, now))}`. A POST route goes through the same gate as the two built-in actions (token, origin, JSON, size, exact keys); a `ValueError` from it is a 400. Flags: `--db NAME=PATH` (repeatable), `--markets-db`, `--markets-ledger-db`, `--j7-db`, `--guard-file`, `--creator-dir`, `--names-db`; they only fill `cfg` for the folder's routes.
+
+The page read lists each mail with its sender and receiver, so the page can move it between desks. A room lays out however many seats the roster gives it: more than four draw one compact row with labels cut by an ellipsis (the full text is on hover), and beyond seven a `+N` chip stands for the rest. A sealed roster row never reaches a room.

@@ -5,7 +5,8 @@
   const clean = (text, n = 400) => String(text ?? '').replace(/\s+/g, ' ').trim().slice(0, n);
   const known = (raw, name) => raw.sources?.[name]?.state === 'known' ? raw.sources[name].rows : null;
   const median = list => { const s = [...list].sort((a, b) => a - b); return s.length ? s[s.length >> 1] : null; };
-  const symbolOf = order => order.ticker || (order.mint ? order.mint.slice(0, 4) + '…' + order.mint.slice(-4) : 'unknown');
+  const symbolOf = order => window.OfficeNames ? window.OfficeNames.text(order.network_id, order.mint, order.ticker) : order.ticker || (order.mint ? order.mint.slice(0, 4) + '…' + order.mint.slice(-4) : 'unknown');
+  const getJson = async url => { try { const r = await fetch(url, {cache: 'no-store'}); return r.ok ? await r.json() : null; } catch { return null; } };
   const netUsd = o => o.state === 'closed' && fin(o.exit_usd) && fin(o.spend_usd) ? o.exit_usd - o.spend_usd - (o.costs_usd ?? 0) : null;
   const markCache = new Map();
 
@@ -14,7 +15,8 @@
     const key = order.marks_n + ':' + order.mark_at;
     const hit = markCache.get(order.order_id);
     if (hit?.key === key) return hit.value;
-    const item = {symbol: symbolOf(order), source: 'ledger marks · ' + source, observed_at: order.mark_at, bars: [], quote_asset: 'USD'};
+    const item = {symbol: symbolOf(order), source: source === 'ledger' ? 'ledger marks' : 'ledger marks · ' + source,   // the file stem is often just "ledger": say it once
+      chain: order.network_id, mint: order.mint, observed_at: order.mark_at, bars: [], quote_asset: 'USD'};
     try {
       const response = await fetch('/api/office/query?name=marks&order=' + encodeURIComponent(order.order_id), {cache: 'no-store'});
       if (!response.ok) throw new Error('HTTP ' + response.status);
@@ -33,6 +35,9 @@
 
   async function adapt(raw) {
     const now = Date.now() / 1000;
+    const [markets, services] = await Promise.all([getJson('/api/office/markets'), getJson('/api/office/services')]);
+    const mk = markets?.state === 'known' ? markets.rooms : null;
+    await window.OfficeNames?.ensure(((raw.sources?.orders?.rows) ?? []).map(o => [o.network_id, o.mint]).concat(((raw.sources?.tickets?.rows) ?? []).map(t => [t.network_id, t.mint])));
     const seatMap = raw.seats ?? null;
     const roleOf = Object.fromEntries(Object.entries(seatMap ?? {}).map(([role, s]) => [s.actor_id, role]));
     const roleName = actor => roleOf[actor] ?? actor;
@@ -90,10 +95,10 @@
       for (const order of mine.filter(o => o.marks_n >= 2).slice(0, 6)) pending.push(series(order, name).then(item => out[key].price_series.push(item)));
     }
     await Promise.all(pending);
-    floor.book_list.push(['stocks', 'Stocks'], ['crypto', 'Perps']);   // this office holds no margin books: these two stay, and say unknown
+    if (!mk) floor.book_list.push(['stocks', 'Stocks'], ['crypto', 'Perps']);   // without the markets plug-in this office holds no margin books: these two stay, and say unknown
     floor.totals = totals;
 
-    const activity = (raw.activity ?? []).map(e => ({...e, type: e.kind}));
+    const activity = [...(raw.activity ?? []).map(e => ({...e, type: e.kind})), ...(window.OfficeLive?.events(mk, now, raw.mail) ?? [])].sort((a, b) => b.at - a.at).slice(0, 120);
     const heartbeat = raw.office?.heartbeat_at;
     const halt = floor.halts?.find(h => h.action) ;
     const idle = seats ? Object.entries(seats) : [];
@@ -102,10 +107,10 @@
     const filler = floor.filler;
     const fillerAt = fin(filler?.last_mark_at) || fin(filler?.last_outcome_at) ? Math.max(filler.last_mark_at ?? 0, filler.last_outcome_at ?? 0) : null;
     const requests = (raw.requests ?? []).map((r, i) => ({id: 'request-' + i, text: r.text, seat: r.seat, at: r.at, status: {state: 'open', note: 'A reply does not close a request here.'}}));
-    const wire = floor.tickets?.map(t => ({news_id: t.ticket_id, title: [t.verdict, t.mint ? t.mint.slice(0, 4) + '…' + t.mint.slice(-4) : null, t.reason].filter(Boolean).join(' · '),
+    const wire = floor.tickets?.map(t => ({news_id: t.ticket_id, title: [t.verdict, t.mint ? window.OfficeNames.text(t.network_id, t.mint) : null, t.reason].filter(Boolean).join(' · '),
       source: t.seat ?? 'feed', received_at: Date.parse(t.ts) / 1000, disposition: t.verdict}));
     return {
-      ...raw, floor, wire, activity, ...out, seats,
+      ...raw, floor, wire, activity, ...out, seats, mk, svc: services, live: window.OfficeLive?.state() ?? null,
       desk: {state, epoch: raw.office?.epoch, heartbeat_at: heartbeat, halt_reason: halt?.action === 'halt' ? halt.reason : null, seat_wall: null},
       open_call_count: totals ? totals.open : null,
       stats: {...raw.stats, wakes_1h: raw.sources?.wakes?.state === 'known' ? wakes.filter(w => fin(w.at) && w.at > now - 3600).length : null},
@@ -118,7 +123,7 @@
       } : undefined,
       ideas: {proposal_counts: raw.requests ? {open: requests.length} : undefined, proposals_open: raw.requests ? requests.length : null, proposal_history: raw.requests ? requests : undefined, briefs: [], leads: []},
       calendar: [],
-      situation: {stories: [], as_of: raw.as_of},
+      situation: mk?.situation && window.OfficeLive ? window.OfficeLive.situation(mk.situation) : {stories: [], as_of: raw.as_of},
       memes: {paper: {items: [], counts: {}, state: 'chart_only'}},
     };
   }

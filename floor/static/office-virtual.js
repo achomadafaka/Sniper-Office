@@ -151,7 +151,7 @@
   window.OfficeFloor = {
     furniture: FURNITURE,
     activeSeat,
-    seatName: seat => SEAT_NAMES[seat] || seat.charAt(0).toUpperCase() + seat.slice(1),
+    seatName: seat => SEAT_NAMES[seat] || (seat.replace(/^pm_/, 'PM_').replaceAll('_', ' ').replace(/^./, c => c.toUpperCase())),
     boards(id, data) {
       const wall = make('div', null, 'vo-board-wall');
       const defined = FURNITURE[id];     // a room's boards are a list, or a function of the page's data (this office's books vary)
@@ -172,7 +172,7 @@
           panel.append(row);
         }
         const scroll = make('div', null, 'vo-board-lines');
-        for (const value of (Array.isArray(reading) ? reading : reading.lines).filter(Boolean)) scroll.append(make('p', value));
+        for (const value of (Array.isArray(reading) ? reading : reading.lines).filter(Boolean)) scroll.append(make('p', window.OfficeNames ? window.OfficeNames.scrub(value) : value));
         if (!scroll.children.length && !shown.length) scroll.append(make('p', 'Nothing recorded yet'));
         if (scroll.children.length) panel.append(scroll);
         wall.append(panel);
@@ -276,6 +276,7 @@
     },
     replayEvent(floor, event) {
       if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+      if (window.OfficeLive?.replay(floor, event) === 'done') return;      // story cards, mail between desks
       const room = id => floor.querySelector(`[data-tile="${id}"]`);
       const target = room(event.room);
       if (target) {

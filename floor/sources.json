@@ -100,6 +100,26 @@
    "db": "sibling",
    "file": "desk.db",
    "sql": "SELECT verdict,count(*) AS n,max(ts) AS ts FROM desk_tickets WHERE stage='hard_filter' GROUP BY verdict"
+  },
+  "wallet_findings": {
+   "db": "wallet",
+   "limit": 60,
+   "sql": "SELECT wallet,finding_type,severity,message,created_at,run_id FROM wallet_findings WHERE superseded_by IS NULL ORDER BY created_at DESC"
+  },
+  "narrative_guesses": {
+   "db": "narrative",
+   "limit": 40,
+   "sql": "SELECT guess_id,cohort,source,known_at,theme_id,rationale,confidence,ticker_candidates_json,name_candidates_json FROM guesses ORDER BY known_at DESC"
+  },
+  "narrative_matches": {
+   "db": "narrative",
+   "limit": 60,
+   "sql": "SELECT m.network_id,m.mint,m.source,m.guess_id,m.match_kind,m.matched_at,l.name,l.symbol FROM matches m LEFT JOIN launches l ON l.network_id=m.network_id AND l.mint=m.mint ORDER BY m.matched_at DESC"
+  },
+  "x_mentions": {
+   "db": "x",
+   "limit": 60,
+   "sql": "SELECT m.post_id,m.network_id,m.mint,m.ticker,m.method,m.seen_at,p.author,substr(p.text,1,300) AS text,p.url FROM x_mentions m LEFT JOIN x_posts p ON p.post_id=m.post_id ORDER BY m.seen_at DESC"
   }
  }
 }

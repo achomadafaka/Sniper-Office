@@ -154,3 +154,114 @@ def test_a_seat_may_sit_in_several_rooms_and_the_chat_panel_lists_requests_and_o
     chat = json.loads(call(server, 'GET', '/api/office/operator-chat')[2])
     assert chat['status'] == 'ok' and chat['asks'] and all(a['mark'] == 'i' and a['seat'] in {s[1] for s in demo.SEATS} for a in chat['asks'])
     assert all(m['seats'][0] in {s[1] for s in demo.SEATS} for m in chat['messages'])
+
+
+# ---- the floor folder's own server side: named databases and routes.py
+
+ROUTES = '''
+def databases(cfg):
+    return {'archive': None, 'spare': None, **(cfg.get('databases') or {})}      # a registered name may have no path
+
+def routes(cfg, dbs):
+    def hello(query, now):
+        return {'hello': query.get('who', ['nobody'])[0], 'now': now, 'archive': dbs.get('archive')}
+    def act(body, now):
+        if not isinstance(body['n'], int):
+            raise ValueError('n')
+        return {'state': 'done', 'n': body['n'] + 1}
+    return {'/api/office/hello': hello}, {'/api/office/act': ({'n'}, act)}
+'''
+
+
+def routes_server(tmp_path, monkeypatch, with_routes=True, token=TOKEN, archive=None):
+    office, quota = demo.build(tmp_path)
+    floor = tmp_path / 'floor';floor.mkdir()
+    (floor / 'floor.html').write_text('<main id="floor"></main>')
+    if with_routes:
+        (floor / 'routes.py').write_text(ROUTES)
+        (floor / 'sources.json').write_text(json.dumps(dict(queries=dict(archived=dict(db='archive', sql='SELECT 1 AS one'), missing=dict(db='spare', sql='SELECT 1 AS one')))))
+    monkeypatch.setattr(U.time, 'time', lambda: demo.NOW)
+    cfg = dict(office_db=str(office), quota_db=str(quota), clock_file=None, floor_dir=str(floor), host='127.0.0.1', port=0, token=token, verbose=False, panels={}, databases=dict(archive=archive) if archive else {})
+    httpd = U.ThreadingHTTPServer(('127.0.0.1', 0), None);cfg['port'] = httpd.server_address[1];httpd.RequestHandlerClass = U.make_handler(cfg)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    return cfg, httpd
+
+
+def test_the_floor_folder_may_add_read_routes_and_named_databases(tmp_path, monkeypatch):
+    archive = tmp_path / 'archive.db'
+    with sqlite3.connect(archive) as conn:
+        conn.execute('CREATE TABLE t(x)')
+    cfg, httpd = routes_server(tmp_path, monkeypatch, archive=str(archive))
+    try:
+        status, _, raw = call(cfg, 'GET', '/api/office/hello?who=you')
+        assert status == 200 and json.loads(raw) == dict(hello='you', now=demo.NOW, archive=str(archive))
+        sources = json.loads(call(cfg, 'GET', '/api/office/newsroom')[2])['sources']
+        assert sources['archived'] == dict(state='known', rows=[dict(one=1, _source='archive')])       # a named database is read at the path it was given
+        assert sources['missing'] == dict(state='unknown', rows=[], reason='no_database')                # a name with no path is unknown, never an empty success
+    finally:
+        httpd.shutdown();httpd.server_close()
+
+
+def test_a_floor_without_routes_has_none_and_a_write_route_needs_the_token_the_keys_and_sane_values(tmp_path, monkeypatch):
+    cfg, httpd = routes_server(tmp_path, monkeypatch, with_routes=False)
+    try:
+        assert call(cfg, 'GET', '/api/office/hello')[0] == 404 and call(cfg, 'POST', '/api/office/act', '{"n":1}', {'Content-Type': 'application/json', 'Origin': 'http://127.0.0.1:%d' % cfg['port'], 'X-Office-Token': TOKEN})[0] == 400
+    finally:
+        httpd.shutdown();httpd.server_close()
+    tmp = tmp_path / 'two';tmp.mkdir()
+    cfg, httpd = routes_server(tmp, monkeypatch)
+    try:
+        def act(body, token=TOKEN):
+            raw = json.dumps(body)
+            return call(cfg, 'POST', '/api/office/act', raw, {'Content-Type': 'application/json', 'Origin': 'http://127.0.0.1:%d' % cfg['port'], 'X-Office-Token': token, 'Content-Length': str(len(raw))})
+        assert act(dict(n=1), token='x' * 32)[0] == 401
+        assert act(dict(n=1, extra=2))[0] == 400 and act(dict())[0] == 400 and act(dict(n='one'))[0] == 400
+        status, _, raw = act(dict(n=1))
+        assert status == 200 and json.loads(raw) == dict(state='done', n=2)
+    finally:
+        httpd.shutdown();httpd.server_close()
+    tmp = tmp_path / 'three';tmp.mkdir()
+    cfg, httpd = routes_server(tmp, monkeypatch, token=None)
+    try:
+        assert call(cfg, 'POST', '/api/office/act', '{"n":1}', {'Content-Type': 'application/json'})[0] == 403       # read-only page: no write route works
+    finally:
+        httpd.shutdown();httpd.server_close()
+
+
+def test_only_registered_database_names_are_queryable_and_a_bad_flag_is_refused():
+    doc = dict(queries=dict(a=dict(db='archive_2', sql='SELECT 1')))
+    assert V.source_queries(doc, names=('archive_2',))
+    with pytest.raises(ValueError):
+        V.source_queries(doc)                                                  # a name the floor folder did not register is refused
+    with pytest.raises(ValueError):
+        V.source_queries(doc, names=('other',))
+    with pytest.raises(SystemExit):
+        U.main(['--office-db', 'x.db', '--db', 'Bad=/tmp/x'])
+    with pytest.raises(SystemExit):
+        U.main(['--office-db', 'x.db', '--db', 'noequals'])
+
+
+def test_mail_activity_names_both_ends_so_the_page_can_move_it_between_desks(server):
+    acts = json.loads(call(server, 'GET', '/api/office/newsroom')[2])['activity']
+    mail = [a for a in acts if a['kind'] == 'mail']
+    assert mail and all('from' in a and 'to' in a for a in mail) and ('head', 'researcher') in {(a['from'], a['to']) for a in mail}
+
+
+def test_a_sealed_seat_does_not_reach_the_rooms_even_when_rooms_json_names_it(tmp_path):
+    office, quota = demo.build(tmp_path)
+    layout = dict(rooms=dict(front=['head', 'researcher']), fallback=None)
+    with sqlite3.connect(office) as conn:
+        conn.execute('UPDATE office_v2_roster SET sealed=1 WHERE role=?', ('researcher',))
+    doc = V.newsroom(str(office), str(quota), now=demo.NOW, layout=layout)
+    assert doc['rooms']['front'] == ['head'] and 'researcher' not in doc['seats']
+
+
+def test_a_room_lists_every_rostered_seat_once_and_the_roster_decides_how_many(tmp_path):
+    office, quota = demo.build(tmp_path)
+    layout = dict(rooms=dict(front=[s[1] for s in demo.SEATS], back=['head']), fallback=None)
+    doc = V.newsroom(str(office), str(quota), now=demo.NOW, layout=layout)
+    assert sorted(doc['rooms']['front']) == sorted(s[1] for s in demo.SEATS) and doc['rooms']['back'] == ['head']      # a seat may sit in two rooms; none is dropped or invented
+    with sqlite3.connect(office) as conn:
+        conn.execute('DELETE FROM office_v2_roster WHERE role=?', ('archivist',))
+    doc = V.newsroom(str(office), str(quota), now=demo.NOW, layout=layout)
+    assert 'archivist' not in doc['rooms']['front'] and len(doc['rooms']['front']) == len(demo.SEATS) - 1

@@ -13,6 +13,8 @@
     return s < 60 ? s + 's ago' : s < 3600 ? (s / 60 | 0) + 'm ago' : s < 86400 ? (s / 3600 | 0) + 'h ago' : (s / 86400 | 0) + 'd ago';
   };
   const name = seat => window.OfficeFloor.seatName(seat);
+  const coin = (chain, mint, ticker) => window.OfficeNames.node(chain, mint, ticker);       // Name ($SYMBOL), the address small and secondary
+  const coinText = (chain, mint, ticker) => window.OfficeNames.text(chain, mint, ticker);
   const join = (...parts) => parts.filter(p => p != null && p !== '').join(' · ');
   const usd = n => finite(n) ? (n < 0 ? '-$' : '+$') + Math.abs(n).toFixed(2) : null;
   const dollars = n => finite(n) ? '$' + n.toFixed(2) : null;
@@ -53,8 +55,8 @@
   Object.assign(window.OfficeFloor.furniture, {
     newsroom: [['Feed tickets', 'screen', d => {
       const tickets = d.floor?.tickets, rows = d.floor?.candidates, passed = (d.floor?.ticket_counts ?? []).find(c => c.verdict === 'PASS');
-      if (tickets) return {figure: figure(String(passed?.n ?? 0), 'passed the feed filter'), lines: tickets.slice(0, 3).map(t => join(t.verdict, short(t.mint, 10), short(t.reason, 40), age(Date.parse(t.ts) / 1000)))};
-      return rows ? {figure: figure(String(rows.length), 'candidate coins recorded'), lines: rows.slice(0, 3).map(r => join(short(r.mint, 12), r.network_id, age(r.known_at)))} : [];
+      if (tickets) return {figure: figure(String(passed?.n ?? 0), 'passed the feed filter'), lines: tickets.slice(0, 3).map(t => join(t.verdict, coinText(t.network_id, t.mint), short(t.reason, 40), age(Date.parse(t.ts) / 1000)))};
+      return rows ? {figure: figure(String(rows.length), 'candidate coins recorded'), lines: rows.slice(0, 3).map(r => join(coinText(r.network_id, r.mint), r.network_id, age(r.known_at)))} : [];
     }], thoughts('Latest thoughts', 'newsroom', 'paper'), mail('Mail', 'newsroom', 'cabinet')],
     research: [thoughts('Last findings', 'research', 'paper'), requests('Seat requests', 'research', 'gold'),
       ['Browsing', 'screen', d => (d.floor?.visits ?? []).slice(0, 4).map(v => join(v.host, short(v.path, 30), age(v.at)))]],
@@ -66,7 +68,7 @@
     debate: [mail('Mail', 'debate', 'cabinet'), tools('Tool calls', 'debate', 'notebook'), standups('Standups', 'paper')],
     decision: [['Open now', 'paper', d => {
       const open = orderRows(d).filter(o => o.state === 'open');
-      return {figure: figure(String(open.length), 'orders open in the books'), lines: open.slice(0, 4).map(o => join(o.ticker ?? short(o.mint, 12), dollars(o.spend_usd), age(o.filled_at)))};
+      return {figure: figure(String(open.length), 'orders open in the books'), lines: open.slice(0, 4).map(o => join(coinText(o.network_id, o.mint, o.ticker), dollars(o.spend_usd), age(o.filled_at)))};
     }], ['Finished', 'gold', d => {
       const closed = orderRows(d).filter(o => o.state === 'closed' && finite(o.exit_usd) && finite(o.spend_usd));
       const net = closed.reduce((n, o) => n + o.exit_usd - o.spend_usd - (o.costs_usd ?? 0), 0);
@@ -119,18 +121,18 @@
   };
   const orderTable = (title, d, wanted) => table(title, ['Ledger', 'Coin', 'Chain', 'Requested', 'Filled', 'Closed', 'Spent', 'Exit value', 'Costs', 'Net', 'Why it ended'],
     orderRows(d).filter(o => wanted.includes(o.state)).sort((a, b) => b.requested_at - a.requested_at),
-    o => [o._source, o.ticker ?? o.mint, o.network_id, stamp(o.requested_at), stamp(o.filled_at), stamp(o.closed_at), dollars(o.spend_usd), dollars(o.exit_usd), dollars(o.costs_usd),
+    o => [o._source, coin(o.network_id, o.mint, o.ticker), o.network_id, stamp(o.requested_at), stamp(o.filled_at), stamp(o.closed_at), dollars(o.spend_usd), dollars(o.exit_usd), dollars(o.costs_usd),
       usd(o.state === 'closed' && finite(o.exit_usd) && finite(o.spend_usd) ? o.exit_usd - o.spend_usd - (o.costs_usd ?? 0) : null), human(o.exit_reason ?? o.reason)], o => o.order_id);
   const filler = d => {
     const f = d.floor?.filler;
     return section('Paper filler', f && (finite(f.last_mark_at) || finite(f.last_outcome_at)) ? block(line('Last mark', finite(f.last_mark_at) ? age(f.last_mark_at) : null), line('Last request outcome', finite(f.last_outcome_at) ? age(f.last_outcome_at) : null), line('Last fill attempt', finite(f.last_attempt_at) ? age(f.last_attempt_at) : null)) : line('The filler has recorded no mark or outcome in this ledger.'));
   };
-  const paperRequests = d => table('Requests to the filler', ['When', 'Kind', 'Seat', 'Coin', 'Chain', 'Reason'], d.floor?.paper_requests, r => [stamp(r.at), r.kind, d.seats ? Object.keys(d.seats).find(k => d.seats[k].actor_id === r.actor_id) ?? r.actor_id : r.actor_id, r.mint, r.network_id, r.reason], r => r.request_id);
+  const paperRequests = d => table('Requests to the filler', ['When', 'Kind', 'Seat', 'Coin', 'Chain', 'Reason'], d.floor?.paper_requests, r => [stamp(r.at), r.kind, d.seats ? Object.keys(d.seats).find(k => d.seats[k].actor_id === r.actor_id) ?? r.actor_id : r.actor_id, coin(r.network_id, r.mint), r.network_id, r.reason], r => r.request_id);
   const outcomes = d => table('Request outcomes', ['When', 'Kind', 'Outcome', 'Reason'], d.floor?.outcomes, r => [stamp(r.at), r.kind, r.outcome, r.reason], r => r.request_id);
   const capital = d => table('Capital', ['Ledger', 'Book', 'When', 'Kind', 'Amount', 'Note'], d.floor?.capital, c => [c._source, c.book_id, stamp(c.at), c.kind, dollars(c.usd), c.note]);
   const halts = d => table('Halts', ['When', 'Action', 'By', 'Reason'], d.floor?.halts, h => [stamp(h.at), h.action, h.actor_id, h.reason], h => 'halt-' + h.seq);
-  const feedTickets = d => table('Feed tickets', ['When', 'Verdict', 'Coin', 'Chain', 'Stage', 'Why', 'Seat'], d.floor?.tickets, t => [stamp(Date.parse(t.ts) / 1000), t.verdict, t.mint, t.network_id, t.stage, t.reason, t.seat], t => t.ticket_id);
-  const candidates = d => table('Candidate coins', ['Known', 'Coin', 'Chain', 'Pool', 'Seat'], d.floor?.candidates, c => [stamp(c.corrected_known_at ?? c.known_at), c.mint, c.network_id, c.pool, c.actor_id]);
+  const feedTickets = d => table('Feed tickets', ['When', 'Verdict', 'Coin', 'Chain', 'Stage', 'Why', 'Seat'], d.floor?.tickets, t => [stamp(Date.parse(t.ts) / 1000), t.verdict, coin(t.network_id, t.mint), t.network_id, t.stage, t.reason, t.seat], t => t.ticket_id);
+  const candidates = d => table('Candidate coins', ['Known', 'Coin', 'Chain', 'Pool', 'Seat'], d.floor?.candidates, c => [stamp(c.corrected_known_at ?? c.known_at), coin(c.network_id, c.mint), c.network_id, c.pool, c.actor_id]);
   const filters = d => table('Feed filters', ['When', 'Seat', 'Reason', 'Rules'], d.floor?.filters, f => [stamp(f.at), f.actor_id, f.reason, f.rules_json], f => 'filter-' + f.seq);
   const reads = d => table('Results reads', ['Seat', 'First read', 'Last read', 'Items', 'Reads'], d.floor?.reads, r => [r.actor_id, stamp(r.first_at), stamp(r.last_at), r.items_n, r.reads]);
   const wakeTable = (d, roles) => {
@@ -146,7 +148,7 @@
     memes: (d, r) => [seatTable(d, r), notebookSection(d, r), mailTable(d, r), orderTable('Paper orders, all ledgers', d, ['open', 'closed', 'censored']), activityTable(d, r)],
     debate: (d, r) => [seatTable(d, r), mailTable(d, r), standupTable(d), toolTable(d, r), wakeTable(d, r), activityTable(d, r)],
     decision: (d, r) => [seatTable(d, r), orderTable('Open orders', d, ['open', 'pending']), orderTable('Closed orders', d, ['closed', 'censored']), requestTable(d, r), mailTable(d, r), taskTable(d, r), halts(d), activityTable(d, r)],
-    trading: d => [section('Perps and stocks', line('This office holds no margin books, so perps and stock margin returns, tickets and queued entries are unknown.')), orderTable('Orders, every ledger', d, ['open', 'pending', 'closed', 'censored']), paperRequests(d), outcomes(d), capital(d), filler(d), reads(d)],
+    trading: d => [d.mk ? null : section('Perps and stocks', line('This office holds no margin books, so perps and stock margin returns, tickets and queued entries are unknown.')), orderTable('Orders, every ledger', d, ['open', 'pending', 'closed', 'censored']), paperRequests(d), outcomes(d), capital(d), filler(d), reads(d)],
     control: d => [seatTable(d, Object.keys(d.seats ?? {})), wakeTable(d), toolTable(d), taskTable(d), halts(d), standupTable(d), mailTable(d), requestTable(d)],
   };
   for (const [id, build] of Object.entries(extras)) {

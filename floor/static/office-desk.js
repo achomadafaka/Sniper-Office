@@ -62,9 +62,11 @@
       render();
     },
   };
-  function metric(label, text) {
+  function metric(label, text, live) {
     const node = el('div', null, 'od-metric');
-    node.append(el('span', label), el('strong', text));
+    const strong = el('strong', text);
+    if (live) strong.dataset.live = live;      // office-live.js rewrites it every second
+    node.append(el('span', label), strong);
     return node;
   }
   function scores(row) {
@@ -101,8 +103,8 @@
     strip.append(status,
       metric('Paper book, closed orders', book ? `${money(book.net_usd)} / ${value(book.wins)} wins of ${value(book.scored)}` : unknown),
       metric('Open orders', value(data.open_call_count)),
-      metric('Perps margin return', percent(data.crypto?.summary?.sum_net_pct)),
-      metric('Stock margin return', percent(data.stocks?.summary?.sum_net_pct)),
+      ...(data.mk ? [] : [metric('Perps margin return', percent(data.crypto?.summary?.sum_net_pct)), metric('Stock margin return', percent(data.stocks?.summary?.sum_net_pct))]),
+      ...(window.OfficeLive?.header(data) ?? []).map(([label, text, live]) => metric(label, text, live)),
       metric('Last hour', `${value(data.stats?.tool_calls_1h)} tool calls / ${value(data.stats?.wakes_1h)} wakes`),
       metric('Seats awake / sleeping / parked', data.seats ? `${count('working')} / ${count('sleeping')} / ${count('parked')}` : unknown),
       metric('Seats active in last 5 min', `${value(activeSeats)} / ${value(totalSeats)}`),
@@ -268,7 +270,15 @@
       }
       const boards = window.OfficeFloor.boards(room.id, data);
       const stations = el('div', null, 'od-floor-stations');
-      for (const [index, seat] of (room.seats ?? []).entries()) {
+      const everyone = room.seats ?? [], MAX_SEATS = 7;      // a room lays out any number of seats on one row; beyond MAX_SEATS a +N chip stands for the rest
+      if (everyone.length > 4) stations.classList.add('ol-dense');
+      stations.style.setProperty('--ol-cols', String(Math.min(Math.max(everyone.length, 1), MAX_SEATS)));
+      if (everyone.length > MAX_SEATS) {
+        const more = el('span', '+' + (everyone.length - MAX_SEATS), 'ol-more');
+        more.title = everyone.slice(MAX_SEATS).join(', ') + ' (open the room)';
+        stations.append(more);
+      }
+      for (const [index, seat] of everyone.slice(0, MAX_SEATS).entries()) {
         if (seat === 'quant' && room.id === 'debate') continue;
         if (window.OfficeFloor) {
           const station = window.OfficeFloor.station(seat, data.seats?.[seat], index,
@@ -308,7 +318,7 @@
     headline: 'Headline', headline_matched: 'Headline', headline_unmatched: 'Headline',
     debate: 'Debate', debate_outcome: 'Debate', call_opened: 'Call', call_refused: 'Refusal',
     thesis_review: 'Review', review_raised: 'Review', trade_opened: 'Trade', trade_closed: 'Trade',
-    skill_changed: 'Skill', seat_reset: 'Reset',
+    skill_changed: 'Skill', seat_reset: 'Reset', story: 'Story', j7: 'J7', mail: 'Mail',
   };
   function renderFeed() {
     const scroll = feed.scrollTop;
@@ -323,7 +333,7 @@
       item.disabled = !rooms.has(event.room);
       const meta = el('span', null, 'od-feed-meta');
       meta.append(el('strong', label, `od-feed-type type-${label.toLowerCase()}`), clock(event.at));
-      item.append(meta, el('span', value(event.title)));
+      item.append(meta, el('span', window.OfficeNames.scrub(value(event.title))));
       item.addEventListener('click', () => open(event.room, item, event.item_id));
       feed.append(item);
     }
@@ -335,9 +345,7 @@
     box.setAttribute('role', 'region');
     box.setAttribute('aria-label', room.title + ' room');
     if (room.id === 'situation') {
-      const board = el('div', null, 'od-floor-board vo-situation-wall');
-      board.append(roomContent(room, 'summary'));
-      box.append(board);
+      // the room's own detail draws the one map (with its story list); a second, compact copy here showed the world twice
     } else if (window.OfficeFloor) box.append(window.OfficeFloor.boards(room.id, data));
     const people = el('div', null, 'od-scene-people');
     for (const [index, seat] of (room.seats ?? []).entries()) {

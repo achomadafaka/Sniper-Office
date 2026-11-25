@@ -8,8 +8,10 @@ The two actions (write to a seat, clear a park) need a token: put at least 24 ra
 and pass --token-file. Without one the page is read-only. For another machine, put your own tunnel in front; there is no login here."""
 import argparse
 import hmac
+import importlib.util
 import ipaddress
 import json
+import re
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import stat
@@ -46,15 +48,29 @@ def floor_layout(floor_dir):
     return dict(rooms=rooms, fallback=doc.get('fallback'))
 
 
-def floor_queries(floor_dir):
+def floor_queries(floor_dir, names=()):
     """The floor's own read-only data queries, sources.json in its folder (see views.source_queries). Absent means none. Read once at start."""
     path = Path(floor_dir).resolve() / 'sources.json'
     if not path.is_file():
         return {}
     try:
-        return V.source_queries(json.loads(path.read_text()))
+        return V.source_queries(json.loads(path.read_text()), names)
     except ValueError as exc:
         raise SystemExit(str(exc))
+
+
+def floor_routes(floor_dir, cfg):
+    """The floor folder's own server side, routes.py in it (trusted code, like rooms.json and sources.json; read once at start): databases(cfg) names the project databases sources.json may query,
+    routes(cfg, databases) returns (gets, posts): {path: fn(query, now)} and {path: (exact body keys, fn(body, now))}. Absent means none. Returns (databases, gets, posts)."""
+    path = Path(floor_dir).resolve() / 'routes.py'
+    if not path.is_file():
+        return dict(cfg.get('databases') or {}), {}, {}
+    spec = importlib.util.spec_from_file_location('floor_routes', path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    dbs = module.databases(cfg)
+    gets, posts = module.routes(cfg, dbs)
+    return dbs, gets, posts
 
 
 MAX_BODY = 8192
@@ -81,7 +97,8 @@ def make_handler(cfg):
 
     assets = floor_assets(cfg['floor_dir']) if cfg.get('floor_dir') else {}
     layout = floor_layout(cfg['floor_dir']) if cfg.get('floor_dir') else V.NO_ROOMS
-    queries = floor_queries(cfg['floor_dir']) if cfg.get('floor_dir') else {}
+    paths, gets, posts = floor_routes(cfg['floor_dir'], cfg) if cfg.get('floor_dir') else ({}, {}, {})
+    queries = floor_queries(cfg['floor_dir'], tuple(paths)) if cfg.get('floor_dir') else {}
 
     def now():
         return C.corrected_now(cfg['clock_file'], host_now=time.time()) if cfg.get('clock_file') else time.time()
@@ -130,9 +147,11 @@ def make_handler(cfg):
                     before = query.get('before', [None])[0]
                     return self._api(V.seat(cfg['office_db'], cfg.get('quota_db'), query.get('actor', [''])[0], now=at, before=int(before) if before else None))
                 if url.path == '/api/office/newsroom':       # the floor page's one read: seats, rooms, live feed, paper book
-                    return self._send(200, V.newsroom(cfg['office_db'], cfg.get('quota_db'), now=at, ledgers=cfg.get('ledgers') or (), layout=layout, queries=queries))
+                    return self._send(200, V.newsroom(cfg['office_db'], cfg.get('quota_db'), now=at, ledgers=cfg.get('ledgers') or (), layout=layout, queries=queries, extra=paths))
+                if url.path in gets:                           # the floor folder's own read routes (floor_routes)
+                    return self._send(200, gets[url.path](query, at))
                 if url.path == '/api/office/query':           # one named, parameterised read from the floor's sources.json
-                    return self._send(200, V.query(queries, query.get('name', [''])[0], {k: v[0] for k, v in query.items()}, cfg['office_db'], cfg.get('quota_db'), cfg.get('ledgers') or ()))
+                    return self._send(200, V.query(queries, query.get('name', [''])[0], {k: v[0] for k, v in query.items()}, cfg['office_db'], cfg.get('quota_db'), cfg.get('ledgers') or (), extra=paths))
                 if url.path == '/api/office/operator-chat':   # the floor's chat panel: seat requests and the operator's mail, read only
                     return self._send(200, V.operator_chat(cfg['office_db'], cfg.get('quota_db'), now=at, layout=layout))
                 if url.path == '/api/mail':
@@ -182,6 +201,11 @@ def make_handler(cfg):
                 return self._send(503, dict(error='clock_unknown'))
             if self.path == '/api/mail' and set(body) == {'to', 'client_id', 'text'}:
                 out = V.send_operator_mail(cfg['office_db'], to_actor_id=body['to'], client_id=body['client_id'], text=body['text'], now=at)
+            elif self.path in posts and set(body) == posts[self.path][0]:       # the floor folder's own write routes: exact keys, same token gate
+                try:
+                    out = posts[self.path][1](body, at)
+                except ValueError:
+                    return self._send(400, dict(error='body_invalid'))
             elif self.path == '/api/clear-park' and set(body) == {'actor', 'reason'} and cfg.get('quota_db'):
                 out = V.clear_park(cfg['office_db'], cfg['quota_db'], actor_id=body['actor'], reason=body['reason'], now=at)
             else:
@@ -201,6 +225,12 @@ def main(argv=None):
     p.add_argument('--host', default='127.0.0.1');p.add_argument('--port', type=int, default=8765)
     p.add_argument('--token-file', help='enables the two write actions');p.add_argument('--verbose', action='store_true')
     p.add_argument('--ledger-db', action='append', default=[], help='a paper ledger database the floor page reads (repeatable)')
+    p.add_argument('--db', action='append', default=[], metavar='NAME=PATH', help='a project database the floor page may query (sources.json "db": NAME) and its routes read; repeatable')
+    for name in ('markets', 'markets-ledger', 'j7'):
+        p.add_argument('--%s-db' % name, help='same as --db %s=PATH' % name.replace('-', '_'))
+    p.add_argument('--guard-file', help='the host guard file, shown read-only in Control')
+    p.add_argument('--creator-dir', help='the creator collector state dir, read only')
+    p.add_argument('--names-db', help='the floor routes\' name cache (written by this process); default token_names.db beside --office-db; "none" turns lookups off')
     p.add_argument('--floor-dir', help="a project's animated floor (floor.html and its files), shown at /; the operator page stays at /operator")
     p.add_argument('--plugins', default='', help='comma-separated modules whose register(host) adds panels; trusted code, as for a seat')
     args = p.parse_args(argv)
@@ -212,7 +242,18 @@ def main(argv=None):
     if not loopback and token is None:
         raise SystemExit('refusing to listen beyond this machine without --token-file; everything the seats wrote would be readable by the network')
     host = plugins.load(dict(plugins=[name for name in args.plugins.split(',') if name], office_db=args.office_db, quota_db=args.quota_db))
-    cfg = dict(office_db=args.office_db, quota_db=args.quota_db, clock_file=args.clock_file, floor_dir=args.floor_dir, ledgers=args.ledger_db, host=args.host, port=args.port, token=token, verbose=args.verbose, panels=host.panels)
+    names_db = None if args.names_db == 'none' else args.names_db or str(Path(args.office_db).resolve().parent / 'token_names.db')
+    databases = {}
+    for item in args.db:
+        name, sep, path = item.partition('=')
+        if not sep or not re.fullmatch(r'[a-z][a-z0-9_]{0,15}', name) or not path:
+            raise SystemExit('--db wants NAME=PATH with a lower-case name')
+        databases[name] = path
+    for name in ('markets', 'markets_ledger', 'j7'):
+        if getattr(args, name + '_db'):
+            databases[name] = getattr(args, name + '_db')
+    cfg = dict(office_db=args.office_db, databases=databases,
+               guard_file=args.guard_file, creator_dir=args.creator_dir, names_db=names_db, quota_db=args.quota_db, clock_file=args.clock_file, floor_dir=args.floor_dir, ledgers=args.ledger_db, host=args.host, port=args.port, token=token, verbose=args.verbose, panels=host.panels)
     server = serve(cfg)
     print('office ui on http://%s:%d (%s, %d project panels)' % (args.host, args.port, 'actions enabled' if token else 'read-only', len(host.panels)), flush=True)
     try:
