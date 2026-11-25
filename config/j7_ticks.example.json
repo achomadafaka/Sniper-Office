@@ -6,5 +6,14 @@
   "tick_s": 1,
   "max_req_per_cycle": 4,
   "retention_days": 7,
-  "tick_max_age_s": 10
+  "tick_max_age_s": 10,
+  "onchain": true,
+  "research_env_file": "/path/to/run/config/research.env",
+  "commitment": "confirmed",
+  "evm_poll_s": 1,
+  "ref_s": 30,
+  "heartbeat_s": 1,
+  "flush_s": 0.25,
+  "max_dev": 0.6,
+  "evm_rpc": {"base": "https://base-rpc.publicnode.com", "bsc": "https://bsc-rpc.publicnode.com", "ethereum": "https://ethereum-rpc.publicnode.com"}
 }
