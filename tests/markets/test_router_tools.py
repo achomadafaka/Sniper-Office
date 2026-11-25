@@ -36,6 +36,12 @@ def test_router_other_and_threshold_and_meme_fields():
     assert R.meme_proposal('Quarterly results unchanged') is None
 
 
+def test_router_source_prior_alone_is_below_the_route_threshold():
+    r = rooms('Local council debates parking', source='espn_top')       # a sports source with no sports words: prior 20 < 30
+    assert list(r['rooms']) == ['other']
+    assert 'sports' in rooms('Local council debates the NBA playoffs', source='espn_top')['rooms']
+
+
 def test_router_market_overlap_and_places():
     docs = [('c%d' % i, 'Will team%d win the title%d?' % (i, i)) for i in range(10)] + [('cf', 'Will Iran close the Strait of Hormuz before July?')]
     r = rooms('Iran threatens to close the Strait of Hormuz', markets=docs)
