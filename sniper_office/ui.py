@@ -46,6 +46,17 @@ def floor_layout(floor_dir):
     return dict(rooms=rooms, fallback=doc.get('fallback'))
 
 
+def floor_queries(floor_dir):
+    """The floor's own read-only data queries, sources.json in its folder (see views.source_queries). Absent means none. Read once at start."""
+    path = Path(floor_dir).resolve() / 'sources.json'
+    if not path.is_file():
+        return {}
+    try:
+        return V.source_queries(json.loads(path.read_text()))
+    except ValueError as exc:
+        raise SystemExit(str(exc))
+
+
 MAX_BODY = 8192
 HEADERS = {'Content-Security-Policy': "default-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'", 'X-Content-Type-Options': 'nosniff',
            'Referrer-Policy': 'no-referrer', 'Cache-Control': 'no-store', 'X-Frame-Options': 'DENY'}
@@ -70,6 +81,7 @@ def make_handler(cfg):
 
     assets = floor_assets(cfg['floor_dir']) if cfg.get('floor_dir') else {}
     layout = floor_layout(cfg['floor_dir']) if cfg.get('floor_dir') else V.NO_ROOMS
+    queries = floor_queries(cfg['floor_dir']) if cfg.get('floor_dir') else {}
 
     def now():
         return C.corrected_now(cfg['clock_file'], host_now=time.time()) if cfg.get('clock_file') else time.time()
@@ -118,7 +130,11 @@ def make_handler(cfg):
                     before = query.get('before', [None])[0]
                     return self._api(V.seat(cfg['office_db'], cfg.get('quota_db'), query.get('actor', [''])[0], now=at, before=int(before) if before else None))
                 if url.path == '/api/office/newsroom':       # the floor page's one read: seats, rooms, live feed, paper book
-                    return self._send(200, V.newsroom(cfg['office_db'], cfg.get('quota_db'), now=at, ledgers=cfg.get('ledgers') or (), layout=layout))
+                    return self._send(200, V.newsroom(cfg['office_db'], cfg.get('quota_db'), now=at, ledgers=cfg.get('ledgers') or (), layout=layout, queries=queries))
+                if url.path == '/api/office/query':           # one named, parameterised read from the floor's sources.json
+                    return self._send(200, V.query(queries, query.get('name', [''])[0], {k: v[0] for k, v in query.items()}, cfg['office_db'], cfg.get('quota_db'), cfg.get('ledgers') or ()))
+                if url.path == '/api/office/operator-chat':   # the floor's chat panel: seat requests and the operator's mail, read only
+                    return self._send(200, V.operator_chat(cfg['office_db'], cfg.get('quota_db'), now=at, layout=layout))
                 if url.path == '/api/mail':
                     return self._api(V.mail(cfg['office_db'], now=at))
                 if url.path == '/api/requests':

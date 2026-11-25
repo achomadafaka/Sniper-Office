@@ -142,10 +142,22 @@ script-bearing seat text.
 
 ## 10. The seat floor
 
-`floor/` holds the source project's newest Office page (rooms with pixel agents at their stations, a header strip, a live feed), ported and filled with this office's own seats. It is that project's page, not part of the package, and the project-word test skips the folder. Start it with `--floor-dir floor`; add `--ledger-db PATH` (repeatable) to fill the ledger room from paper ledgers.
+`floor/` holds the source project's newest Office page (rooms with pixel agents at their stations, a header strip, a live feed), ported and filled with this office's own seats. It is that project's page, not part of the package, and the project-word test skips the folder. Start it with `--floor-dir floor`; add `--ledger-db PATH` (repeatable) to fill the books from paper ledgers.
 
 `--floor-dir DIR` shows the floor at `/` and moves the operator page to `/operator`. `DIR` holds `floor.html`, its files (`.html .js .css .json .ttf .woff2`) and `rooms.json`, the floor's own seat-to-room table (`{"rooms": {room: [role, ...]}, "fallback": room or null}`, read once at start; the runtime knows no room names). The files are listed once at start and served by exact URL, so a path cannot be built from a request; symlinks and other file types are not served. One strict CSP on every page: scripts, styles and images `'self'` only, no inline script, no inline style.
 
 The page makes one read, `GET /api/office/newsroom` (`views.newsroom`): seats by role with their recorded state, the rooms they sit in, a feed of mail, requests, wakes and tool calls, open requests, and the ledger summary. It is read-only; the old feed, explore and DM routes are gone (the operator page still sends mail). Seat state is the host's last observation, not a process probe: awake, sleeping until a time, parked with its reason, or unknown. Requests are the latest ten per seat and a reply does not close one.
+
+The floor is the source page whole: fourteen rooms, each with wall boards, pixel seats, tabs and tables inside, a header strip and a live feed. Three more reads feed it, all generic:
+
+- `floor/sources.json` is the floor's own read-only SQL (`{"queries": {name: {"db": "office"|"quota"|"ledger"|"sibling", "sql": "SELECT ..." or a list of variants, "params": {name: "text"|"real"|"int"}, "limit": n}}}`). `ledger` runs on every `--ledger-db` (a list of `sql` variants covers an older ledger schema); `sibling` names a file next to the office store (`"file"`), such as a collector's database that may not exist yet (read-only, so reading it creates nothing). A query without `params` rides in the page read as `sources.<name>` (`state`, `rows`, each row tagged `_source` with its file name); one with `params` runs only by name at `GET /api/office/query?name=...&<param>=...`. Every statement runs on a read-only connection with an authorizer that allows reads only, a deadline and a row cap. The SQL is the project's, like a plug-in; the runtime only runs it.
+- `GET /api/office/operator-chat` lists the seats' requests and the operator's mail to them, read only (a reply does not close a request here, so every ask is informational).
+- A seat may sit in several rooms (`rooms.json`); the page read lists it in each.
+
+The page turns the read into the shape the rooms were written for in `floor/static/office-adapter.js`; `office-rooms-office.js` adds this office's boards and tabs to each room. Paper charts are the ledger's recorded marks (`marks`), fetched per order through the named query and drawn as the source's line charts; an older ledger has no USD price, so its marks are the position value in SOL and the chart says so.
+
+The project's room table (which seats sit where, and what each room is filled from) is in the plug-in's document.
+
+Header cells with no data here stay and say unknown. The camera, pan and zoom building of the source project is not part of the source's own Office page (it is loaded only by an older view), so it is not here.
 
 What this store holds nothing for shows as unknown or empty, never as a number. The project's seat mapping and what its page leaves out are in the plug-in's document (`docs/` folder, the file named after the plug-in).

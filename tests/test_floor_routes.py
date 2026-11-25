@@ -92,3 +92,65 @@ def test_a_bad_rooms_table_is_refused_and_a_missing_one_gives_seats_no_room(tmp_
         U.floor_layout(tmp_path)
     (tmp_path / 'rooms.json').unlink()
     assert U.floor_layout(tmp_path) == V.NO_ROOMS
+
+
+def _sourced_server(tmp_path, monkeypatch):
+    """A floor with a sources.json: one bulk query on the ledger, one bound by name, one on the office store, one that tries to write."""
+    office, quota = demo.build(tmp_path)
+    ledger = tmp_path / 'ledger.db'
+    with sqlite3.connect(ledger) as conn:
+        conn.execute('CREATE TABLE marks(order_id TEXT,at REAL,price REAL)')
+        conn.executemany('INSERT INTO marks VALUES(?,?,?)', [('a', 1., 2.), ('a', 2., 3.), ('b', 1., 9.)])
+    floor = tmp_path / 'floor';floor.mkdir()
+    (floor / 'floor.html').write_text('<main></main>')
+    (floor / 'sources.json').write_text(json.dumps(dict(queries=dict(
+        every_mark=dict(db='ledger', sql='SELECT order_id,at,price FROM marks ORDER BY at'),
+        newer=dict(db='ledger', sql=['SELECT nope FROM nowhere', 'SELECT at,price FROM marks WHERE order_id=? AND at>=? ORDER BY at'], params=dict(order='text', after='real')),
+        roster=dict(db='office', sql='SELECT count(*) AS n FROM office_v2_roster'),
+        missing=dict(db='ledger', sql='SELECT * FROM no_such_table'),
+        late=dict(db='sibling', file='collector.db', sql='SELECT count(*) AS n FROM t'), absent=dict(db='sibling', file='never.db', sql='SELECT 1 AS one')))))
+    with sqlite3.connect(tmp_path / 'collector.db') as conn:        # a collector's database next to the office store, found by file name
+        conn.execute('CREATE TABLE t(a)');conn.execute('INSERT INTO t VALUES(1)')
+    monkeypatch.setattr(U.time, 'time', lambda: demo.NOW)
+    cfg = dict(office_db=str(office), quota_db=str(quota), clock_file=None, floor_dir=str(floor), host='127.0.0.1', port=0, token=None, verbose=False, panels={}, ledgers=[str(ledger)])
+    httpd = U.ThreadingHTTPServer(('127.0.0.1', 0), None);cfg['port'] = httpd.server_address[1];httpd.RequestHandlerClass = U.make_handler(cfg)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    return cfg, httpd
+
+
+def test_the_floors_own_queries_ride_with_the_page_read_and_run_by_name_with_bound_values(tmp_path, monkeypatch):
+    cfg, httpd = _sourced_server(tmp_path, monkeypatch)
+    try:
+        doc = json.loads(call(cfg, 'GET', '/api/office/newsroom')[2])['sources']
+        assert [r['price'] for r in doc['every_mark']['rows']] == [2., 9., 3.] and doc['every_mark']['rows'][0]['_source'] == 'ledger'
+        assert doc['roster']['rows'][0]['n'] == len(demo.SEATS)
+        assert doc['late']['rows'][0]['n'] == 1 and doc['absent']['state'] == 'unknown' and not (tmp_path / 'never.db').exists()      # a collector not running yet is unknown, and reading it creates nothing
+        assert doc['missing']['state'] == 'unknown' and doc['missing']['rows'] == [] and 'newer' not in doc      # a query with parameters is not run for the page; one no database can answer says unknown
+        status, _, raw = call(cfg, 'GET', '/api/office/query?name=newer&order=a&after=1.5')
+        assert status == 200 and [r['price'] for r in json.loads(raw)['rows']] == [3.]      # the variant the database accepts is the one that runs
+        for bad in ('name=nope', 'name=every_mark', 'name=newer&order=a', 'name=newer&order=a&after=x', 'name=newer&order=a&after=nan', 'name=newer&order=&after=1'):
+            assert call(cfg, 'GET', '/api/office/query?' + bad)[0] == 400, bad
+    finally:
+        httpd.shutdown();httpd.server_close()
+
+
+def test_a_query_file_that_could_write_or_is_malformed_is_refused(tmp_path):
+    for bad in (dict(queries=dict(x=dict(db='ledger', sql='DELETE FROM marks'))), dict(queries=dict(x=dict(db='elsewhere', sql='SELECT 1'))), dict(queries=dict(x=dict(db='sibling', file='../up.db', sql='SELECT 1'))), dict(queries=dict(x=dict(db='sibling', sql='SELECT 1'))), dict(queries=dict(x=dict(db='office', sql='SELECT ?', params=dict(a='blob')))), [], dict(queries=[])):
+        with pytest.raises(ValueError):
+            V.source_queries(bad)
+    ledger = tmp_path / 'l.db'
+    with sqlite3.connect(ledger) as conn:
+        conn.execute('CREATE TABLE marks(a)')
+    assert V._run([str(ledger)], dict(sql='SELECT 1; DELETE FROM marks')) is None             # a second statement is not run: execute takes one
+    assert V._run([str(ledger)], dict(sql='INSERT INTO marks VALUES(1)')) is None             # and the read-only connection and authorizer refuse a write that got past validation
+    with sqlite3.connect(ledger) as conn:
+        assert conn.execute('SELECT count(*) FROM marks').fetchone()[0] == 0
+
+
+def test_a_seat_may_sit_in_several_rooms_and_the_chat_panel_lists_requests_and_operator_mail(server):
+    layout = dict(rooms=dict(decision=['head'], research=['head', 'researcher']), fallback=None)
+    doc = V.newsroom(server['office_db'], server['quota_db'], now=demo.NOW, layout=layout)
+    assert 'head' in doc['rooms']['decision'] and 'head' in doc['rooms']['research'] and 'archivist' not in sum(doc['rooms'].values(), [])
+    chat = json.loads(call(server, 'GET', '/api/office/operator-chat')[2])
+    assert chat['status'] == 'ok' and chat['asks'] and all(a['mark'] == 'i' and a['seat'] in {s[1] for s in demo.SEATS} for a in chat['asks'])
+    assert all(m['seats'][0] in {s[1] for s in demo.SEATS} for m in chat['messages'])

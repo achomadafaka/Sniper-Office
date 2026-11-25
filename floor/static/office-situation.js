@@ -80,7 +80,7 @@
     detail(data) {
       const result = text('div', null, 'office-situation');
       if (!reading(data).stories) {
-        result.append(text('p', 'This office records no stories or places, so there is nothing to place on the map.'));
+        result.append(text('p', 'Situation records have not arrived.'));
         return result;
       }
       const stories = typeof WorldMap !== 'undefined' ? WorldMap.storyOrder(recorded(data), reading(data).as_of) : recorded(data);

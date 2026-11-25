@@ -7,6 +7,7 @@ from contextlib import contextmanager
 import json
 import math
 import os
+import re
 from pathlib import Path
 import sqlite3
 import time
@@ -623,17 +624,107 @@ def _tool_calls(office_db, now):
         return None
 
 
-def newsroom(office_db, quota_db, *, now, ledgers=(), layout=NO_ROOMS):
+SOURCE_ROWS = 400
+SOURCE_DBS = ('office', 'quota', 'ledger', 'sibling')
+
+
+def source_queries(doc):
+    """The floor project's own read-only queries, `sources.json` in its folder: {"queries": {name: {db, sql, params?, limit?}}}. db is office, quota, ledger (every --ledger-db) or sibling (the file named by `file`, next to the office store: a collector's database that may not exist yet). `sql` may be a list of variants: the first one a database accepts is the one run on it (a ledger written by an older schema).
+    A query with `params` is run by name from the page with those query-string values bound, in order; one without runs with every page read. The SQL is the project's, like a plugin."""
+    queries = doc.get('queries') if isinstance(doc, dict) else None
+    if not isinstance(queries, dict) or not all(
+            isinstance(q, dict) and q.get('db') in SOURCE_DBS and isinstance(q.get('sql'), (str, list)) and all(isinstance(t, str) and t.lstrip().upper().startswith(('SELECT', 'WITH')) for t in ([q['sql']] if isinstance(q.get('sql'), str) else q['sql']))
+            and all(t in ('text', 'real', 'int') for t in (q.get('params') or {}).values())
+            and (q['db'] != 'sibling' or isinstance(q.get('file'), str) and re.fullmatch(r'[A-Za-z0-9_-][A-Za-z0-9_.-]{0,63}', q['file'])) for q in queries.values()):
+        raise ValueError('sources.json must be {"queries": {name: {"db": office|quota|ledger, "sql": "SELECT ...", "params": {name: text|real|int}}}}')
+    return queries
+
+
+def _read_only(action, *_):
+    return sqlite3.SQLITE_OK if action in (sqlite3.SQLITE_SELECT, sqlite3.SQLITE_READ, sqlite3.SQLITE_FUNCTION, getattr(sqlite3, 'SQLITE_RECURSIVE', 33)) else sqlite3.SQLITE_DENY
+
+
+def _value(v):
+    return None if isinstance(v, (bytes, memoryview)) or isinstance(v, float) and not math.isfinite(v) else v[:PANEL_TEXT] if isinstance(v, str) else v
+
+
+def _run(paths, spec, args=()):
+    """Rows from every database in `paths` that can answer, each tagged `_source` with its file name. A file lacking the tables is skipped; none answering is None."""
+    rows, answered = [], False
+    for path in paths:
+        for sql in [spec['sql']] if isinstance(spec['sql'], str) else spec['sql']:
+            try:
+                with _ro(path) as conn:
+                    conn.set_authorizer(_read_only)
+                    cursor = conn.execute(sql, args)
+                    names = [c[0] for c in cursor.description]
+                    rows += [dict(zip(names, map(_value, r)), _source=Path(path).stem) for r in cursor.fetchmany(min(int(spec.get('limit') or SOURCE_ROWS), SOURCE_ROWS))]
+                    answered = True
+                break
+            except (sqlite3.Error, ValueError):
+                continue
+    return rows if answered else None
+
+
+def _paths(spec, office_db, quota_db, ledgers):
+    if spec['db'] == 'sibling':
+        return [str(Path(office_db).resolve().parent / spec['file'])]
+    return {'office': [office_db], 'quota': [quota_db] if quota_db else [], 'ledger': list(ledgers)}[spec['db']]
+
+
+def sources(queries, office_db, quota_db, ledgers):
+    """Every parameterless project query: {name: {state, rows}}. Unknown, with the reason, when no database answers."""
+    out = {}
+    for name, spec in queries.items():
+        if spec.get('params'):
+            continue
+        paths = _paths(spec, office_db, quota_db, ledgers)
+        rows = _run(paths, spec) if paths else None
+        out[name] = dict(state='known', rows=rows) if rows is not None else dict(state='unknown', rows=[], reason='no_database' if not paths else 'unreadable')
+    return out
+
+
+def query(queries, name, values, office_db, quota_db, ledgers):
+    """One parameterised project query by name. ValueError for an unknown name or a missing or malformed value."""
+    spec = queries.get(name)
+    if spec is None or not spec.get('params'):
+        raise ValueError('query_unknown')
+    args = []
+    for key, kind in spec['params'].items():
+        raw = values.get(key)
+        if not isinstance(raw, str) or not 0 < len(raw) <= 256:
+            raise ValueError('param_invalid')
+        args.append(raw if kind == 'text' else int(raw) if kind == 'int' else float(raw))
+        if kind == 'real' and not math.isfinite(args[-1]):
+            raise ValueError('param_invalid')
+    rows = _run(_paths(spec, office_db, quota_db, ledgers), spec, args)
+    return dict(state='known' if rows is not None else 'unknown', name=name, rows=rows or [])
+
+
+def operator_chat(office_db, quota_db, *, now, layout=NO_ROOMS):
+    """What the floor's operator-chat panel shows: the seats' requests and the operator's mail to them. Read only; a reply does not close a request here, so every ask is informational."""
+    feed = floor_feed(office_db, quota_db, now=now, limit=200)
+    if feed['roster']['state'] == 'unknown':
+        return dict(status='unavailable')
+    roles = {r['actor_id']: r['role'] for r in feed['roster']['items']}
+    asks = [dict(id=str(i + 1), seat=roles.get(q['actor_id'], q['actor_id']), mark='i', text=_title(q['text'], 600), status='open') for i, q in enumerate(reversed(feed['questions']['items']))]
+    messages = [dict(seats=[roles.get(m['to_actor_id'], m['to_actor_id'])], text=_title(m['text'], 600), at=m['created_at']) for m in reversed(feed['mail']['items']) if m['from_actor_id'] == 'operator']
+    return dict(status='ok', asks=asks, messages=messages, open_by_seat={}, damaged_rows=0)
+
+
+def newsroom(office_db, quota_db, *, now, ledgers=(), layout=NO_ROOMS, queries=None):
     """What the floor page draws: seats by role with their real state, the rooms they sit in, a live feed of mail, requests, wakes and tool calls, and the paper book.
     Everything this store does not hold is absent, not zero: the page says unknown."""
     feed = floor_feed(office_db, quota_db, now=now, limit=200)
     out = dict(state=feed['state'], as_of=feed['as_of'], office=dict(state='unknown', epoch=None, heartbeat_at=None), rooms={r: [] for r in layout['rooms']}, seats=None, activity=None, mail=None,
-               requests=None, stats=None, book=book(ledgers, now=now) if _finite(now) else dict(state='unknown', reason='clock_unknown', books=[], last_closed=[]))
+               requests=None, stats=None, tasks=None, sources=sources(queries or {}, office_db, quota_db, ledgers) if _finite(now) else {},
+               book=book(ledgers, now=now) if _finite(now) else dict(state='unknown', reason='clock_unknown', books=[], last_closed=[]))
     if feed['seats']['state'] != 'known':
         return out
     roles = {r['actor_id']: r['role'] for r in feed['roster']['items']}
     place = lambda role: next((room for room, members in layout['rooms'].items() if role in members), layout['fallback'])
-    unread = {r['actor_id']: r['unread_mail'] for r in overview(office_db, quota_db, now=now)['seats']}
+    seen = {r['actor_id']: r for r in overview(office_db, quota_db, now=now)['seats']}
+    unread = {a: r['unread_mail'] for a, r in seen.items()}
     seats = {}
     for s in feed['seats']['items']:
         a, kind = s['activity'], s['activity']['kind']
@@ -642,9 +733,11 @@ def newsroom(office_db, quota_db, *, now, ledgers=(), layout=NO_ROOMS):
         thought = s['messages'][0] if s['messages'] else None
         seats[s['role']] = dict(status=kind if kind in ('working', 'sleeping', 'parked') else None, last_action=doing, last_at=s['last_event_at'], last_tool=s['last_tool'], wakes_today=s['wakes_today'],
                                 tokens_today=s['tokens_today'], unread_mail=unread.get(s['actor_id']), last_thought=_title(thought['text'], 400) if thought else None,
-                                last_thought_at=thought['corrected_at'] if thought else None)
-        if place(s['role']) is not None:
-            out['rooms'].setdefault(place(s['role']), []).append(s['role'])
+                                last_thought_at=thought['corrected_at'] if thought else None, actor_id=s['actor_id'], sleep_until=a['until'], parked_reason=a['reason'], requests=seen.get(s['actor_id'], {}).get('requests'),
+                                last_wake=seen.get(s['actor_id'], {}).get('last_wake'), generation=next((r['generation'] for r in feed['roster']['items'] if r['actor_id'] == s['actor_id']), None))
+        for room in [r for r, members in layout['rooms'].items() if s['role'] in members] or [layout['fallback']]:      # a seat may sit in several rooms
+            if room is not None:
+                out['rooms'].setdefault(room, []).append(s['role'])
     named = lambda actor: roles.get(actor, actor)
     room_of = lambda *actors: next((place(named(x)) for x in actors if x in roles), None)
     activity = []
@@ -654,8 +747,8 @@ def newsroom(office_db, quota_db, *, now, ledgers=(), layout=NO_ROOMS):
         refs = e['refs']
         if e['kind'] == 'tool_call':
             kind, title = 'tool', _title(e['text'])
-        elif e['kind'] == 'request':
-            kind, title = 'request', _title(e['text'])
+        elif e['kind'] in ('request', 'standup'):
+            kind, title = e['kind'], _title(e['text'])
         elif e['kind'] == 'lifecycle' and e['text'] in ('wake_start', 'wake_end', 'sleep', 'parked', 'unparked'):
             kind, title = 'wake', {'wake_start': 'woke' + (' (%s)' % refs['type'] if refs.get('type') else ''), 'wake_end': 'wake ended' + (' (%s)' % refs['outcome'] if refs.get('outcome') else ''),
                                    'sleep': 'went to sleep', 'parked': 'parked: ' + str(refs.get('reason') or 'reason unknown'), 'unparked': 'unparked'}[e['text']]
@@ -667,7 +760,8 @@ def newsroom(office_db, quota_db, *, now, ledgers=(), layout=NO_ROOMS):
         activity.append(dict(kind='mail', room=room_of(raw['from_actor_id'], raw['to_actor_id']), item_id=m['id'], at=m['at'], title='%s to %s: %s' % (m['from'], m['to'], _title(m['text'], 100)), seat=m['to'] if m['from'] == 'operator' else m['from']))
     activity.sort(key=lambda e: e['at'], reverse=True)
     requests = [dict(seat=named(q['actor_id']), at=q['corrected_at'], text=_title(q['text'], 600)) for q in feed['questions']['items']]
-    out.update(seats=seats, activity=activity[:80], mail=sorted(mail, key=lambda m: m['at'], reverse=True)[:20], requests=requests[:40],
+    out.update(tasks=[dict(seat=named(t['actor_id']), **{k: t[k] for k in ('task_id', 'status', 'title', 'note')}) for t in feed['tasks']['items']] if feed['tasks']['state'] != 'unknown' else None,
+               seats=seats, activity=activity[:80], mail=sorted(mail, key=lambda m: m['at'], reverse=True)[:20], requests=requests[:40],
                stats=dict(requests=len(requests), tool_calls_1h=_tool_calls(office_db, now)),
                office=dict(state='running' if any(v['status'] == 'working' for v in seats.values()) else 'quiet', epoch=feed['roster']['items'][0]['epoch_id'] if feed['roster']['items'] else None,
                          heartbeat_at=max((v['last_at'] for v in seats.values() if v['last_at'] is not None), default=None)))

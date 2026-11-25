@@ -1,0 +1,105 @@
+{
+ "queries": {
+  "orders": {
+   "db": "ledger",
+   "limit": 150,
+   "sql": [
+    "SELECT o.order_id,o.book_id,o.network_id,o.mint,o.pool,o.state,o.reason,o.requested_at,o.filled_at,o.closed_at,o.spend_usd,o.exit_usd,o.costs_usd,o.exit_reason,o.qty,o.entry_price_usd,o.peak_value_usd,(SELECT count(*) FROM marks m WHERE m.order_id=o.order_id) AS marks_n,(SELECT price_usd FROM marks m WHERE m.order_id=o.order_id ORDER BY m.at DESC LIMIT 1) AS mark_price,(SELECT value_usd FROM marks m WHERE m.order_id=o.order_id ORDER BY m.at DESC LIMIT 1) AS mark_value,(SELECT at FROM marks m WHERE m.order_id=o.order_id ORDER BY m.at DESC LIMIT 1) AS mark_at FROM orders o ORDER BY o.requested_at DESC",
+    "SELECT o.order_id,o.book_id,o.network_id,o.mint,o.pool,o.state,o.reason,o.requested_at,o.filled_at,o.closed_at,o.spend_usd,o.exit_usd,o.costs_usd,o.exit_reason,NULL AS qty,o.entry_unit_price_usd AS entry_price_usd,NULL AS peak_value_usd,o.ticker,(SELECT count(*) FROM marks m WHERE m.order_id=o.order_id) AS marks_n,NULL AS mark_price,NULL AS mark_value,(SELECT CAST(lamports AS REAL)/1e9 FROM marks m WHERE m.order_id=o.order_id AND m.lamports IS NOT NULL ORDER BY m.at DESC LIMIT 1) AS mark_sol,(SELECT at FROM marks m WHERE m.order_id=o.order_id ORDER BY m.at DESC LIMIT 1) AS mark_at FROM orders o ORDER BY o.requested_at DESC"
+   ]
+  },
+  "capital": {
+   "db": "ledger",
+   "sql": "SELECT book_id,at,kind,usd,note FROM capital_flows ORDER BY at"
+  },
+  "outcomes": {
+   "db": "ledger",
+   "limit": 120,
+   "sql": [
+    "SELECT request_id,kind,outcome,reason,at FROM request_outcomes ORDER BY at DESC"
+   ]
+  },
+  "filler": {
+   "db": "ledger",
+   "sql": [
+    "SELECT (SELECT max(at) FROM marks) AS last_mark_at,(SELECT max(at) FROM request_outcomes) AS last_outcome_at,(SELECT max(at) FROM fill_attempts) AS last_attempt_at",
+    "SELECT (SELECT max(at) FROM marks) AS last_mark_at,(SELECT max(at) FROM request_outcomes) AS last_outcome_at,NULL AS last_attempt_at"
+   ]
+  },
+  "requests": {
+   "db": "office",
+   "limit": 100,
+   "sql": "SELECT request_id,kind,epoch_id,actor_id,at,ticket_id,network_id,mint,pool,order_id,reason,detail_json FROM desk_paper_requests ORDER BY at DESC"
+  },
+  "halts": {
+   "db": "office",
+   "limit": 30,
+   "sql": "SELECT seq,epoch_id,action,actor_id,reason,at FROM desk_halts ORDER BY seq DESC"
+  },
+  "candidates": {
+   "db": "office",
+   "limit": 100,
+   "sql": "SELECT epoch_id,network_id,mint,pool,actor_id,known_at,corrected_known_at FROM desk_candidates ORDER BY known_at DESC"
+  },
+  "feed_filters": {
+   "db": "office",
+   "limit": 30,
+   "sql": "SELECT seq,epoch_id,actor_id,at,rules_json,reason FROM desk_feed_filters ORDER BY seq DESC"
+  },
+  "results_reads": {
+   "db": "office",
+   "limit": 30,
+   "sql": "SELECT epoch_id,actor_id,sha256,first_at,last_at,items_n,reads FROM desk_results_reads ORDER BY last_at DESC"
+  },
+  "tool_counts": {
+   "db": "office",
+   "limit": 200,
+   "sql": "SELECT actor_id,json_extract(refs_json,'$.tool') AS tool,count(*) AS n,max(corrected_at) AS at FROM office_v2_events WHERE kind='tool_call' GROUP BY actor_id,tool ORDER BY n DESC"
+  },
+  "visits": {
+   "db": "office",
+   "limit": 40,
+   "sql": "SELECT actor_id,corrected_at AS at,json_extract(refs_json,'$.host') AS host,json_extract(refs_json,'$.path') AS path FROM office_v2_events WHERE kind='browser_visit' ORDER BY seq DESC"
+  },
+  "standups": {
+   "db": "office",
+   "limit": 12,
+   "sql": "SELECT actor_id,corrected_at AS at,text FROM office_v2_events WHERE kind='standup' ORDER BY seq DESC"
+  },
+  "notebooks": {
+   "db": "office",
+   "limit": 12,
+   "sql": "SELECT e.actor_id,e.corrected_at AS at,json_extract(e.refs_json,'$.notebook_text') AS text FROM office_v2_events e WHERE e.kind='workspace' AND e.seq=(SELECT max(seq) FROM office_v2_events w WHERE w.kind='workspace' AND w.actor_id=e.actor_id)"
+  },
+  "wakes": {
+   "db": "quota",
+   "limit": 80,
+   "sql": "SELECT actor_id,ended_at AS at,used,state,json_extract(payload_json,'$.model') AS model,json_extract(payload_json,'$.outcome') AS outcome,json_extract(payload_json,'$.started_at') AS started_at FROM quota_wakes ORDER BY ended_at DESC"
+  },
+  "marks": {
+   "db": "ledger",
+   "limit": 400,
+   "params": {
+    "order": "text"
+   },
+   "sql": [
+    "SELECT at,price_usd,value_usd FROM (SELECT at,price_usd,value_usd FROM marks WHERE order_id=? ORDER BY at DESC LIMIT 400) ORDER BY at",
+    "SELECT at,NULL AS price_usd,NULL AS value_usd,value_sol FROM (SELECT at,CAST(lamports AS REAL)/1e9 AS value_sol FROM marks WHERE order_id=? AND lamports IS NOT NULL ORDER BY at DESC LIMIT 400) ORDER BY at"
+   ]
+  },
+  "tickets": {
+   "db": "sibling",
+   "file": "desk.db",
+   "limit": 60,
+   "sql": [
+    "SELECT ticket_id,network_id,mint,stage,verdict,reason,seat,ts FROM desk_tickets ORDER BY id DESC",
+    "SELECT ticket_id,network_id,mint,stage,verdict,reason,NULL AS seat,ts FROM desk_tickets ORDER BY id DESC"
+   ]
+  },
+  "ticket_counts": {
+   "db": "sibling",
+   "file": "desk.db",
+   "sql": "SELECT verdict,count(*) AS n,max(ts) AS ts FROM desk_tickets WHERE stage='hard_filter' GROUP BY verdict"
+  }
+ }
+}

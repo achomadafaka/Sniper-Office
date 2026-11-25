@@ -46,34 +46,34 @@ A tool whose config key is missing, or whose file cannot be read, answers `{"sta
 
 ## The seat floor page
 
-`floor/` is the source project's rooms page with this office's seats. `floor/rooms.json` maps seats to rooms (a role not listed sits in Research):
+`floor/` is the source project's rooms page, whole, filled with this office's seats and paper books (what each room shows and where it comes from is in `docs/UI.md` section 10). `floor/rooms.json` maps seats to rooms (a role not listed sits in Research; a seat may sit in several rooms), `floor/sources.json` holds the page's read-only SQL.
 
 | room | seats |
 |---|---|
-| Newsroom | narrative |
-| Research | scout, researcher, forensics |
+| Newsroom | scout |
+| Research | researcher |
+| Explorer | forensics |
+| Memes | narrative |
 | Debate | judge, judge_gpt |
 | Decision | head |
-| Trading | none: the paper book |
-| Situation | none: a world map |
+| Trading | judge, judge_gpt |
+| Control, Situation, Strategy Lab, Paper Labs, Sports, Video rule lab, Coach and skills | none |
 
-Unknown or empty on purpose, because this store holds nothing for them: prediction strategies, perps and stock margin returns, the scanner, headlines, world-map stories and the paper charts. Those header stats are replaced by this office's own (seats awake, wakes, tokens, mail, requests, tool calls, paper book). The map draws no points. The source page's other rooms (Strategy Lab, Paper Labs, Explorer, Memes, Sports, Video rule lab, Coach, Control) are not ported. The Trading book is `unknown` unless `--ledger-db` is given: it counts open and closed orders, wins and net of costs for closed orders with a recorded exit price (modelled fills, no landing proof).
+What each room is filled from:
 
+| room | seats | filled from |
+|---|---|---|
+| Newsroom | scout | feed tickets (the collector's database, when present), candidate coins, seat thoughts, mail |
+| Research | researcher | seat requests (as proposals), pages read, notebooks, tools used |
+| Explorer | forensics | notebooks, requests, pages read |
+| Memes | narrative | seat thoughts, paper hit rate across the ledgers |
+| Debate | judge, judge_gpt | mail, standups, tool calls, wakes |
+| Decision | head | open and closed orders, requests, tasks, halts |
+| Trading | judge, judge_gpt | one book per ledger: summary, charts from marks, orders, requests to the filler, outcomes, capital |
+| Control | none | seats, wakes, tools, standups, mail, requests, health, operator chat |
+| Situation, Strategy Lab, Paper Labs, Sports, Video rule lab, Coach and skills | none | nothing here holds data for them: the rooms and their tabs stay and say unknown |
 
-## The seat floor page
-
-`floor/` is the source project's rooms page with this office's seats. `floor/rooms.json` maps seats to rooms (a role not listed sits in Research):
-
-| room | seats |
-|---|---|
-| Newsroom | narrative |
-| Research | scout, researcher, forensics |
-| Debate | judge, judge_gpt |
-| Decision | head |
-| Trading | none: the paper book |
-| Situation | none: a world map |
-
-Unknown or empty on purpose, because this store holds nothing for them: prediction strategies, perps and stock margin returns, the scanner, headlines, world-map stories and the paper charts. Those header stats are replaced by this office's own (seats awake, wakes, tokens, mail, requests, tool calls, paper book). The map draws no points. The source page's other rooms (Strategy Lab, Paper Labs, Explorer, Memes, Sports, Video rule lab, Coach, Control) are not ported. The Trading book is `unknown` unless `--ledger-db` is given: it counts open and closed orders, wins and net of costs for closed orders with a recorded exit price (modelled fills, no landing proof).
+Unknown or empty on purpose, because this store holds nothing for them: prediction strategies, perps and stock margin returns, the scanner, headlines (the feed tickets stand in when the feed collector's database exists), world-map stories, the video rule lab, sports, the coach. The Trading books are one per `--ledger-db`: open and closed orders, wins and net of costs for closed orders with a recorded exit price (modelled fills, no landing proof), and a line chart per order from the ledger's marks.
 
 ## Live feed collector
 

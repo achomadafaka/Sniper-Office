@@ -55,16 +55,107 @@
     return b ? line(dollars(b.net_usd) ?? points(b.net_pp) ?? 'no price', b.marked + ' of ' + b.open + ' priced') : null;
   };
   // Each board answers one question of the operator. A reader returns lines, or {figure, lines}; it never invents a number.
-  // Each board answers one question of the operator. Rooms add theirs in office-rooms.js; a reader returns lines, or {figure, lines}; it never invents a number.
-  const FURNITURE = {};
+  const FURNITURE = {
+    newsroom: [
+      ['News to trades', 'screen', d => ({figure: figure(finite(d.news_hour?.matched) ? d.news_hour.matched + ' of ' + d.news_hour.headlines : null, 'headlines matched, last hour'),
+        lines: [line(finite(d.news_hour?.related) ? d.news_hour.related + ' related' : null, finite(d.news_hour?.sent_to_debate) ? d.news_hour.sent_to_debate + ' sent to debate' : null)]})],
+      ['Latest headlines', 'paper', d => (d.wire ?? []).slice(0, 4).map(row => line(short(row.title, 52), age(row.received_at)))],
+    ],
+    research: [
+      ['Last finding', 'paper', d => (d.briefs ?? []).slice(0, 1).flatMap(r => [short(r.question, 60), field(r.possibly_mispriced)])],
+      ['Seat requests', 'gold', d => ({figure: figure(finite(d.ideas?.proposal_counts?.open) ? String(d.ideas.proposal_counts.open) : null, 'open'),
+        lines: [finite(d.ideas?.proposal_counts?.built) ? d.ideas.proposal_counts.built + ' built' : null]})],
+    ],
+    debate: [
+      ['Debates', 'paper', d => ({figure: figure(finite(d.stats?.argued_1h) ? String(d.stats.argued_1h) : null, 'full debates, last hour'),
+        lines: [finite(d.stats?.debates_1h) ? line(d.stats.debates_1h + ' items read', count(d.stats.errors_1h, 'error')) : null]})],
+      ['Latest verdicts', 'cabinet', d => (d.cases ?? []).filter(c => c.question).slice(0, 4).map(c => line(short(c.question), field(c.outcome), age(c.at)))],
+    ],
+    decision: [
+      ['Open now', 'paper', d => {
+        const held = (d.live_book?.positions ?? []).filter(p => p.book === 'Main book').map(p => ({p, usd: ten(p.net_pp, p.entry)}));
+        const priced = held.filter(h => h.usd != null), total = priced.reduce((sum, h) => sum + h.usd, 0);
+        const opened = held.map(h => h.p.opened_at).filter(finite);
+        return {figure: figure(priced.length ? dollars(total) : null, `if $10 each. ${held.length} bets the Head approved` + (opened.length ? `, ${day(Math.min(...opened))} to ${day(Math.max(...opened))}` : ''), total),
+          lines: held.sort((x, y) => (y.usd ?? -Infinity) - (x.usd ?? -Infinity)).map(({p, usd}) =>
+            line(dollars(usd) ?? p.status, p.side + ' ' + short(p.question, 26), `${cents(p.entry)} to ${cents(p.bid)}`))};
+      }],
+      ['Finished', 'gold', d => {
+        const done = finished(d), total = done.reduce((sum, r) => sum + r.usd, 0);
+        return {figure: figure(done.length ? dollars(total) : null, 'at $10 each', total), lines: [`${done.filter(r => r.usd > 0).length} of ${done.length} made money`]};
+      }],
+      ['What would make it trade', 'notebook', d => (d.strategy_lab?.seats ?? []).filter(s => s.last_no_trade && s.book === 'Prediction').sort((a, b) => b.last_no_trade.at - a.last_no_trade.at).slice(0, 1)
+        .flatMap(s => [String(s.last_no_trade.would_trade_if ?? '').split('. ')[0], age(s.last_no_trade.at)])],
+    ],
+    trading: [
+      ['Perps', 'screen', d => tradingBook(d.crypto)],
+      ['Stocks', 'screen', d => tradingBook(d.stocks)],
+      ['Last trade', 'notebook', d => (d.trade_autopsies ?? []).slice(0, 1).flatMap(t => [line(t.symbol, signed(t.net_pct, '%'), age(t.exit_at)), t.autopsy?.verdict])],
+    ],
+    'paper-labs': [
+      ['News calls', 'screen', d => {
+        const lab = d.news_call_lab, rows = Object.entries(lab?.by_seat ?? {});
+        const result = rows.map(([seat, tables]) => ['24h', '6h', '1h', '15m'].map(h => [h, tables?.[h]]).find(([, t]) => t?.scored > 0)).map((hit, i) => hit
+          ? line(field(rows[i][0]), hit[0], dollars(hit[1].net_usd), count(hit[1].scored, 'trade')) : line(field(rows[i][0]), 'no result yet'));
+        return {figure: figure(finite(lab?.calls) ? String(lab.calls) : null, 'forced paper calls'),
+          lines: [bookLine(d, 'News calls') ? 'Live ' + bookLine(d, 'News calls') : null].concat(result,(lab?.latest ?? []).filter((c, i, all) => all.findIndex(o => o.question === c.question) === i).slice(0, 3).map(c => line(c.side + ' ' + short(c.question, 34), quote(c.ask))))};
+      }],
+      ['Algorithms', 'gold', d => (d.algorithm_lab?.algorithms ?? []).slice(-3).reverse().flatMap(a => [a.title,
+        a.replay ? (a.replay.closed ? line(count(a.replay.closed, 'closed trade'), dollars(a.replay.net_usd)) : count(a.replay.fills, 'fill') + ', untested') : null])],
+      ['$10 lane', 'paper', d => ({figure: figure(finite(d.value_lane?.entered) ? String(d.value_lane.entered) : null, 'entered'),
+        lines: [finite(d.value_lane?.open) ? d.value_lane.open + ' open' : null, ...(d.musk_lab?.arms ? Object.entries(d.musk_lab.arms).map(([arm, r]) => line(arm, count(r.entries, 'entry', 'entries'), dollars(r.settled_net_usd))) : [])]})],
+    ],
+    explorer: [['Newest idea', 'notebook', d => (d.ideas?.briefs ?? []).slice(0, 1).flatMap(n => [n.topic, line(finite(n.market?.volume_24h) ? '$' + Math.round(n.market.volume_24h).toLocaleString() + ' traded in 24 h' : null, age(n.at))])]],
+    memes: [
+      ['Stories to watch', 'screen', d => (d.memes?.passes ?? []).flatMap(pass => pass.narratives ?? []).filter(n => n.status === 'pending').slice(0, 3).map(n => line(n.theme, age(d.memes.scored_at)))],
+      ['Hit rate', 'paper', d => {
+        const all = Object.values(d.memes?.by_conviction ?? {}).reduce((sum, r) => ({hit: sum.hit + r.hit, miss: sum.miss + r.miss, unknown: sum.unknown + r.unknown, pending: sum.pending + r.pending}), {hit: 0, miss: 0, unknown: 0, pending: 0});
+        return {figure: figure(`${all.hit}`, 'hits'), lines: [line(all.miss + ' missed', all.unknown + ' unknown'), all.pending + ' pending']};
+      }],
+    ],
+    strategies: [
+      ['Auto-fire (enters by itself)', 'screen', d => {
+        const b = d.live_book?.books?.['Auto-fire'];
+        return {figure: figure(b ? dollars(b.net_usd) ?? String(b.open ?? 0) : null, b ? 'live, ' + b.open + ' open' : 'no trade yet'), lines: b ? [] : ['Looking every minute for crypto price and post-count bets']};
+      }],
+      ['Old bets by hand, by idea', 'gold', d => (d.strategies?.strategies ?? []).filter(s => s.settled_n > 0 && s.unit === 'points')
+        .sort((a, b) => b.settled_sum - a.settled_sum).map(s => line(short(s.name, 26), `${s.wins} of ${s.settled_n} won`, 'last ' + day(Math.max(...(s.records ?? []).map(r => r.at).filter(finite))))) ],
+    ],
+    sports: [['Sports', 'screen', d => ({figure: figure(finite(d.sports_clv?.bets_logged) ? String(d.sports_clv.bets_logged) : null, 'paper bets'),
+      lines: [finite(d.sports_ledger?.games_tracked) ? d.sports_ledger.games_tracked + ' NBA games tracked' : null, finite(d.sports_clv?.margin_pp) ? `Bets only when the price beats the bookmaker by ${d.sports_clv.margin_pp} pp` : null,
+        age(d.sports_clv?.report_at) ? 'Checked ' + age(d.sports_clv.report_at) : null]})]],
+    lab: [['Video rules', 'cabinet', d => (d.lab?.ledger ?? []).slice(0, 2).map(r => line(field(r.event), r.video_id))]],
+    coach: [['Coach wants fixed', 'notebook', d => (d.coach?.[0]?.priorities ?? []).slice(0, 2)],
+      ['Skills changed', 'gold', d => (d.skill_history ?? []).slice(0, 2).map(s => line(s.name?.replaceAll('-', ' '), s.by, age(s.at)))]],
+    control: [['Problems', 'screen', d => {
+      const bad = (d.health?.jobs ?? []).filter(j => j.state !== 'ok'), seats = Object.values(d.health?.seats ?? {}).filter(s => s.state !== 'ok');
+      return {figure: figure(d.health?.jobs ? String(bad.length + seats.length) : null, 'down or late', bad.length + seats.length ? -1 : 0),
+        lines: [...bad.map(j => line(j.label, j.state)), ...seats.map(s => line(field(s.seat), field(s.state) ?? s.last_error?.text)), line(field(d.desk?.state), age(d.desk?.heartbeat_at))]};
+    }], ['Next events', 'paper', d => (d.calendar ?? []).slice(0, 3).map(event => line(event.date?.slice(5), short(event.what, 60)))]],
+  };
+
+  function tradingBook(book) {
+    if (!book) return [];
+    const open = (book.calls ?? []).filter(c => !c.outcome), sum = book.summary ?? {};
+    return {figure: figure(signed(sum.sum_net_pct, '%'), 'total on margin', sum.sum_net_pct),
+      lines: [...open.map(c => line(c.symbol, c.side, signed(c.mark_pct, '%'))), finite(sum.scored) ? `${sum.wins} of ${sum.scored} won` : null,
+        open.length ? null : 'Flat now', ...(book.pending ?? []).slice(0, 2).map(t => line('Queued', t.symbol, t.side, t.trigger_price))]};
+  }
+
+  function checked(book, reading) {
+    const opened = reading?.last_reply?.opened;
+    if (!Array.isArray(opened)) return 'Checked ' + book;
+    return opened.length ? 'Opened ' + opened.join(', ') : 'Checked ' + book + ', no new trade';
+  }
   const activeSeat = (reading, at = Date.now() / 1000) => finite(reading?.last_at) && at - reading.last_at >= 0 && at - reading.last_at <= 300;
   window.OfficeFloor = {
-    activeSeat,
     furniture: FURNITURE,
+    activeSeat,
     seatName: seat => SEAT_NAMES[seat] || seat.charAt(0).toUpperCase() + seat.slice(1),
     boards(id, data) {
       const wall = make('div', null, 'vo-board-wall');
-      const definitions = FURNITURE[id] ?? [];
+      const defined = FURNITURE[id];     // a room's boards are a list, or a function of the page's data (this office's books vary)
+      const definitions = typeof defined === 'function' ? defined(data) : defined ?? [];
       for (const [name, material, read] of definitions) {
         const panel = make('section', null, 'od-floor-board vo-board-' + material);
         panel.dataset.furniture = name;
@@ -143,7 +234,7 @@
       const name = this.seatName(seat);
       const {station, agent} = stationSprite(seat, name, index);
       const recent = activeSeat(reading);
-      const state = reading?.status === 'failed' ? 'Failed' : reading?.status === 'parked' ? 'Parked' : reading?.status === 'sleeping' ? 'Sleeping'
+      const state = reading?.status === 'failed' ? 'Failed'
         : live && reading?.status === 'working' ? 'Working' : recent ? 'Active' : 'Idle';
       agent.dataset.active = String(recent || state === 'Working');
       const healthState = field(health?.state);
@@ -154,9 +245,15 @@
       agent.append(status);
       const fullStatus = line(state, elapsedLabel, finite(probability) ? Math.round(100 * probability) + '% YES' : null);
       status.setAttribute('aria-label', fullStatus);
-      const action = (reading?.last_action || '').replaceAll('_', ' ');
-      const subject = reading?.last_item;
-      const sentence = [action, subject && subject !== action ? subject : ''].filter(Boolean).join(' · ');
+      const raw = reading?.last_action || '';
+      const action = raw === 'head abstain' ? 'Abstained'
+        : raw === 'free hour' ? 'Explored'
+        : raw === 'desk review' ? 'Reviewed the desk'
+        : raw === 'perp snapshot' ? checked('perps', reading)
+        : raw === 'stock screener' ? checked('stocks', reading)
+        : raw.replaceAll('_', ' ');
+      const subject = ['perp snapshot', 'stock screener'].includes(raw) ? null : reading?.last_item;
+      const sentence = [action, subject && subject !== raw ? subject : ''].filter(Boolean).join(' · ');
       if (healthState && !['healthy', 'ok', 'unknown'].includes(healthState)) {
         agent.append(make('span', healthState, 'vo-agent-health'));
       }
@@ -206,5 +303,4 @@
       travel.onfinish = () => file.remove();
     },
   };
-
 })();

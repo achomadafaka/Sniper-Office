@@ -1,2 +1,35 @@
-{"rooms": {"newsroom": ["narrative"], "research": ["scout", "researcher", "forensics"], "debate": ["judge", "judge_gpt"], "decision": ["head"], "trading": [], "situation": []},
- "fallback": "research"}
+{
+ "rooms": {
+  "newsroom": [
+   "scout"
+  ],
+  "research": [
+   "researcher"
+  ],
+  "explorer": [
+   "forensics"
+  ],
+  "memes": [
+   "narrative"
+  ],
+  "debate": [
+   "judge",
+   "judge_gpt"
+  ],
+  "decision": [
+   "head"
+  ],
+  "trading": [
+   "judge",
+   "judge_gpt"
+  ],
+  "coach": [],
+  "control": [],
+  "situation": [],
+  "strategies": [],
+  "paper-labs": [],
+  "sports": [],
+  "lab": []
+ },
+ "fallback": "research"
+}

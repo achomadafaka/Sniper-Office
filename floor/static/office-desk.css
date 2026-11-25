@@ -570,13 +570,6 @@
 #office-desk .od-floor-stations .od-ask-badge { position: absolute; top: 0; right: 0; }
 #office-desk [data-item-id="operator-chat"] textarea { width: 100%; max-width: 100%; box-sizing: border-box; }
 
-/* Sniper-Office: six rooms, not fourteen. */
-@media (min-width: 1101px) {
-  .od-grid.od-floor {
-    grid-template-areas: "newsroom newsroom newsroom research research research debate debate debate situation situation situation" "decision decision decision decision decision decision trading trading trading trading trading trading";
-    grid-template-rows: minmax(0,1fr) minmax(0,1fr);
-  }
-}
-@media (max-width: 1100px) and (min-width: 761px) {
-  .od-grid.od-floor { grid-template-areas: "newsroom research debate" "decision trading situation"; grid-template-rows: repeat(2,minmax(0,1fr)); }
-}
+/* Sniper-Office: saved notebooks keep their line breaks. */
+#office-desk .od-notebook { white-space: pre-wrap; overflow-wrap: anywhere; }
+#office-desk .od-feed-item span { overflow-wrap: anywhere; }
