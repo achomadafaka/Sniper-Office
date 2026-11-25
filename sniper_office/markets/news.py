@@ -5,6 +5,7 @@ import hashlib
 import html
 import re
 import xml.etree.ElementTree as ET
+from xml.parsers import expat
 from email.utils import parsedate_to_datetime
 from datetime import datetime
 
@@ -54,12 +55,16 @@ def clean(text, cap=600):
 
 
 def parse(raw):
-    """[(guid, title, url, summary, published)] from RSS 2.0 or Atom bytes; [] when it does not parse. Doctype entities are refused outright."""
-    if b'<!ENTITY' in raw[:4096] or b'<!DOCTYPE' in raw[:512] and b'[' in raw[:2048]:
-        return []
+    """[(guid, title, url, summary, published)] from RSS 2.0 or Atom bytes; [] when it does not parse. Any DTD or entity declaration rejects the feed (expat handlers, not a byte search)."""
+    def refuse(*args):
+        raise ValueError('dtd_refused')
+    check = expat.ParserCreate()                     # a first pass whose only job is to reject any DTD or entity declaration, in any encoding and anywhere in the document
+    check.StartDoctypeDeclHandler = refuse
+    check.EntityDeclHandler = refuse
     try:
+        check.Parse(raw, True)
         root = ET.fromstring(raw)
-    except ET.ParseError:
+    except (ET.ParseError, ValueError, expat.ExpatError):
         return []
     items = []
     for el in root.iter():

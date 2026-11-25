@@ -159,6 +159,18 @@ def test_rss_atom_parse_and_hostile_input():
     assert NW.parse(b'not xml') == [] and NW.parse(b'<!DOCTYPE x [<!ENTITY a "b">]><rss><channel><item><title>&a;</title></item></channel></rss>') == []
 
 
+def test_any_dtd_or_entity_rejects_the_feed_in_any_encoding_and_position():
+    body = '<rss><channel><item><title>Bitcoin up</title></item></channel></rss>'
+    assert len(NW.parse(body.encode())) == 1
+    ent = '<?xml version="1.0" encoding="UTF-16"?><!DOCTYPE r [<!ENTITY a "b">]><rss><channel><item><title>&a;</title></item></channel></rss>'
+    assert NW.parse(ent.encode('utf-16')) == []                                                   # UTF-16: a byte search for b'<!ENTITY' sees nothing
+    late = '<?xml version="1.0"?><!-- ' + 'x' * 3000 + ' --><!DOCTYPE rss><rss><channel><item><title>Bitcoin up</title></item></channel></rss>'
+    assert NW.parse(late.encode()) == []                                                          # DOCTYPE after 2 KB
+    inner = '<rss><channel><item><title>t</title></item></channel></rss>'
+    assert NW.parse(('<!DOCTYPE rss [<!ENTITY % p "x">]>' + inner).encode()) == []
+    assert NW.parse(b'\xff\xfe garbage') == []
+
+
 def test_news_tick_ingests_routes_dedups_and_polls_on_schedule(fake, dbs):
     feed, _, tmp = dbs
     put_market(feed)
