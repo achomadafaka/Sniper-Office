@@ -32,6 +32,22 @@ permission is the wall that still stands if `bwrap` fails.
 
 Other names or paths: set `"host": {"bridge": ..., "home": ..., "user": ...}` in each seat config.
 
+### Without root for the bridge
+
+Only the system user and the passwordless `sudo -u office` need root. The bridge can be any directory outside `/home`
+that you own, with an access list instead of a group. This is how the package's own end-to-end run was done:
+
+```bash
+mkdir -m 0750 /var/tmp/office-bridge && setfacl -m u:office:rx,d:u:office:rwX,d:m::rwx /var/tmp/office-bridge
+```
+
+```bash
+sudo -n -u office mkdir -m 0750 /var/tmp/office-home
+```
+
+Then `"host": {"bridge": "/var/tmp/office-bridge", "home": "/var/tmp/office-home", "user": "office"}` and the same
+`"bridge"` in the seat config. `/var/tmp` is cleared by some systems on a schedule; use a lasting path for real seats.
+
 ## 2. Publish
 
 Publishing copies this package, optionally your project's git-tracked files, and a private Python runtime with the
@@ -105,7 +121,13 @@ the sandbox. `examples/demo_plugin.py` is a complete one.
 Built-in tools: `shell`, `browse`, `web_search`, `db_read`, `mail_send`, `mail_read`, `sleep`, `request`,
 `notify_operator`.
 
-## 6. Check the walls
+## 6. If a seat parks at once with `claude_auth_expired`
+
+The seat copies the access token from `claude_credentials` and never refreshes it. An expired file means no wake.
+Log in again with the `claude` command line tool, which rewrites that file; the seat resumes by itself on its next
+tick.
+
+## 7. Check the walls
 
 ```bash
 OFFICE_WALLS_REQUIRED=1 OFFICE_WALLS_SECRETS=/path/to/a/secret:/path/to/another python3 -m pytest tests/test_walls.py tests/test_browse_security.py
