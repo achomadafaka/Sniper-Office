@@ -189,3 +189,13 @@ def test_a_missing_m5_count_is_an_unknown_chart_never_zero_prints(m5, status, re
     pair = dict(pairCreatedAt=(NOW - 600) * 1000, txns=dict(m5=m5), liquidity=dict(usd=1.), priceUsd='1', marketCap=1e5)
     chart = F.market_checks(pair, NOW, cfg, NOW)['chart']
     assert (chart['status'], chart['reason']) == (status, reason)
+
+
+def test_pool_origin_kills_creator_seeded_meteora_and_labels_the_rest():
+    from sniper_office.desk.feed import pool_origin
+    held = lambda top: dict(status='pass', top10_pct=top)
+    assert pool_origin(dict(dexId='meteora'), 'Abc', held(95.0), 1)['status'] == 'kill'
+    assert pool_origin(dict(dexId='meteora'), 'Abc', held(40.0), 1)['reason'] == 'creator_pool'
+    assert pool_origin(dict(dexId='meteora'), 'Abc', dict(status='unknown'), 1)['status'] == 'pass'      # unknown holders never kill here
+    assert pool_origin(dict(dexId='pumpswap'), 'Xpump', held(99.0), 1)['reason'] == 'launchpad_migrated'
+    assert pool_origin(dict(dexId='pumpswap'), 'Xbonk', held(5.0), 1)['reason'] == 'creator_pool'

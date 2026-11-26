@@ -318,6 +318,18 @@ def sell_probe(net, clock, mint, probe_sol):
                  price_impact_pct=dict(buy=buy.get('priceImpactPct'), sell=sell.get('priceImpactPct')))
 
 
+def pool_origin(pair, mint, holders, at):
+    """Who can pull the liquidity. A pump.fun mint on PumpSwap, or a Bonk mint on Raydium, came from a launchpad migration that burns the LP. Any other pool was
+    seeded by someone who may still hold the LP. Kill: a Meteora pool whose top 10 (pool vault not excluded) is >= 90%, the creator-seeded single-sided
+    launch that rugged 4 of 6 paper entries on 2026-11-25/26 (-$96, every one drained within 5 min). Mint suffix is a heuristic, not proof of a burn."""
+    dex = str(pair.get('dexId') or '')
+    migrated = (dex == 'pumpswap' and mint.endswith('pump')) or (dex == 'raydium' and mint.endswith('bonk'))
+    top10 = holders.get('top10_pct') if holders.get('status') == 'pass' else None
+    if dex == 'meteora' and finite(top10) and top10 >= 90:
+        return check('kill', 'creator_seeded_meteora', 'dexscreener:pairs+rpc', at, dex=dex, top10_pct=top10)
+    return check('pass', 'launchpad_migrated' if migrated else 'creator_pool', 'dexscreener:pairs', at, dex=dex, lp_burn_likely=migrated)
+
+
 def verdict(checks, cfg):
     """(verdict, reason). Order as in the source: kill first, then unknown mandatory, then unknown required-collected."""
     for name, row in checks.items():
@@ -367,6 +379,7 @@ class Feed:
         market = dict(snapshot(pair, now), source='dexscreener:pairs', fetched_at=at, note='provider claim at decision time')
         checks.update(token_checks(self.net, self.clock, mint, pool))
         checks['sell_probe'] = sell_probe(self.net, self.clock, mint, self.cfg['probe_sol'])
+        checks['pool_origin'] = pool_origin(pair, mint, checks['holders'], at)
         checks['cluster'] = check('unknown', 'not_collected_here', 'none', at)
         checks['dump_group'] = check('unknown', 'not_collected_here', 'none', at)
         v, reason = verdict(checks, self.cfg)
