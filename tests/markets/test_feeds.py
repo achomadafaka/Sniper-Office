@@ -38,8 +38,7 @@ def test_polymarket_tick_stores_markets_books_and_held_tokens(fake, dbs):
     feed, led, tmp = dbs
     C.connect(tmp / 'ledger.db', C.LEDGER_SCHEMA).execute("INSERT INTO bk_positions(pos_id,book_id,lane,instrument,side,qty,entry_price,entry_at,leverage,margin,notional,status,meta_json) VALUES('p','b','polymarket','heldtok','YES',1,.5,1,1,.5,.5,'open',?)", (json.dumps(dict(condition_id='0xheld')),))
     fake.routes = {GAMMA + '?active': [gamma_market()], GAMMA + '?condition_ids': [], GAMMA + '?closed=true&condition_ids': [dict(gamma_market(), conditionId='0xheld', clobTokenIds='["heldtok","heldno"]', closed=True, outcomePrices='["0","1"]')],
-                   'https://clob.polymarket.com/book?token_id=' + YES: book(YES, .48, .50), 'https://clob.polymarket.com/book?token_id=' + NO: book(NO, .50, .52),
-                   'https://clob.polymarket.com/book?token_id=heldtok': book('heldtok', .01, .03), 'https://clob.polymarket.com/book?token_id=heldno': book('heldno', .97, .99)}
+                   'https://clob.polymarket.com/books': [book(YES, .48, .50), book(NO, .50, .52), book('heldtok', .01, .03), book('heldno', .97, .99)]}
     cfg = dict(markets_db=str(tmp / 'feed.db'), ledger_db=str(tmp / 'ledger.db'), gap_s=0)
     detail = PM.tick(cfg, NOW, sleep=lambda s: None)
     assert 'markets=2' in detail and 'books_ok=4' in detail
@@ -52,7 +51,7 @@ def test_polymarket_tick_stores_markets_books_and_held_tokens(fake, dbs):
 
 def test_polymarket_tick_pages_gamma_and_dedups(fake, dbs):
     _, _, tmp = dbs
-    fake.routes = {GAMMA + '?active': [gamma_market()], 'https://clob.polymarket.com/book?token_id=' + YES: book(YES, .48, .50), 'https://clob.polymarket.com/book?token_id=' + NO: book(NO, .50, .52)}
+    fake.routes = {GAMMA + '?active': [gamma_market()], 'https://clob.polymarket.com/books': [book(YES, .48, .50), book(NO, .50, .52)]}
     detail = PM.tick(dict(markets_db=str(tmp / 'feed.db'), ledger_db=str(tmp / 'ledger.db'), gap_s=0, pages=3), NOW, sleep=lambda s: None)
     offsets = [u.split('offset=')[1] for u, _ in fake.calls if u.startswith(GAMMA + '?active')]
     assert offsets == ['0', '100', '200'] and 'markets=1' in detail
@@ -65,7 +64,7 @@ def test_polymarket_tick_adds_tagged_events_and_tracker_counts(fake, dbs):
     fake.routes = {GAMMA + '?active': [gamma_market()], 'https://gamma-api.polymarket.com/events?tag_slug=daily-temperature': [dict(title='Seoul', markets=[hot, dead])],
                    'https://xtracker.polymarket.com/api/users/elonmusk/trackings': dict(data=[dict(id='w1', title='Elon Musk # tweets', startDate='2026-11-20T17:00:00Z', endDate='2099-01-01T00:00:00Z', isActive=True, marketLink='https://polymarket.com/event/x')]),
                    'https://xtracker.polymarket.com/api/trackings/w1': dict(data=dict(stats=dict(total=234, pace=273, daily=[dict(date='2026-11-20T17:00:00Z', count=5)]))),
-                   'https://clob.polymarket.com/book?token_id=': book(YES, .48, .50)}
+                   'https://clob.polymarket.com/books': [book(YES, .48, .50), book('ty', .28, .30)]}
     detail = PM.tick(dict(markets_db=str(tmp / 'feed.db'), ledger_db=str(tmp / 'ledger.db'), gap_s=0, event_tags=['daily-temperature'], trackers=['elonmusk']), NOW, sleep=lambda s: None)
     got = {r[0] for r in feed.execute('SELECT condition_id FROM mk_pm_markets')}
     assert 'markets=2' in detail and got == {COND, '0xtemp'}

@@ -11,10 +11,10 @@ from . import common as C, router as R
 
 GAMMA = 'https://gamma-api.polymarket.com/markets'
 EVENTS = 'https://gamma-api.polymarket.com/events'
-BOOK = 'https://clob.polymarket.com/book?token_id='
+BOOKS = 'https://clob.polymarket.com/books'
 XTRACKER = 'https://xtracker.polymarket.com/api/'
 DEFAULTS = dict(top_n=40, min_volume24h=2000.0, max_spread=0.06, min_days_to_end=0.125, pm_fee_rate=0.05, gap_s=0.35, retention_days=7, interval_s=60, pages=1,
-                event_tags=(), tag_pages=3, tag_top_n=120, tag_min_volume24h=100.0, trackers=(), tracker_history_days=60)
+                event_tags=(), tag_pages=3, tag_top_n=120, tag_min_volume24h=100.0, trackers=(), tracker_history_days=60, tracker_every_s=300)
 
 
 def _end(text):
@@ -105,6 +105,8 @@ def _trackers(cfg, now, feed):
                 end = _end(t.get('endDate')) or 0
                 if not t.get('isActive') and (end < now - 86400 * cfg['tracker_history_days'] or feed.execute('SELECT 1 FROM mk_pm_trackers WHERE tracking_id=? AND active=0', (t['id'],)).fetchone()):
                     continue
+                if t.get('isActive') and feed.execute('SELECT 1 FROM mk_pm_trackers WHERE tracking_id=? AND active=1 AND fetched_at>?', (t['id'], now - cfg['tracker_every_s'])).fetchone():
+                    continue
                 st = (C.get_json(XTRACKER + 'trackings/%s?includeStats=true' % urllib.parse.quote(t['id'])).get('data') or {}).get('stats') or {}
                 hourly = [[d.get('date'), d.get('count')] for d in st.get('daily') or () if isinstance(d, dict)]
                 feed.execute('INSERT OR REPLACE INTO mk_pm_trackers VALUES(?,?,?,?,?,?,?,?,?,?,?,?)', (t['id'], handle, str(t.get('title'))[:200], _end(t.get('startDate')), end, 1 if t.get('isActive') else 0,
@@ -161,12 +163,16 @@ def tick(cfg, now, sleep=time.sleep):
         _store_market(feed, row, now)
         tokens += [(row['condition_id'], row['yes_token']), (row['condition_id'], row['no_token'])]
     tokens += [(None, t) for t in held_t if t not in {t2 for _, t2 in tokens}]
-    for cid, token in tokens:
+    books = {}
+    for i in range(0, len(tokens), 100):         # one POST per 100 books: through the tunnel a single book read costs ~0.8 s, a batch of 100 ~1 s
         try:
-            q = parse_book(C.get_json(BOOK + urllib.parse.quote(token)), token)
+            got = C.get_json(BOOKS, [dict(token_id=t) for _, t in tokens[i:i + 100]])
+            books.update((str(b.get('asset_id')), b) for b in got if isinstance(b, dict))
         except Exception:
-            q = None
+            pass
         sleep(cfg['gap_s'])
+    for cid, token in tokens:
+        q = parse_book(books.get(str(token)), token)
         if q is None:
             n_bad += 1
             continue
