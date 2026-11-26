@@ -7,14 +7,15 @@ import time
 import urllib.parse
 from datetime import datetime, timezone
 
-from . import common as C, router as R
+from . import common as C, router as R, sports as SP
 
 GAMMA = 'https://gamma-api.polymarket.com/markets'
 EVENTS = 'https://gamma-api.polymarket.com/events'
 BOOKS = 'https://clob.polymarket.com/books'
 XTRACKER = 'https://xtracker.polymarket.com/api/'
+SPORTS_TAGS = ('nfl', 'soccer')
 DEFAULTS = dict(top_n=40, min_volume24h=2000.0, max_spread=0.06, min_days_to_end=0.125, pm_fee_rate=0.05, gap_s=0.35, retention_days=7, interval_s=60, pages=1,
-                event_tags=(), tag_pages=3, tag_top_n=120, tag_min_volume24h=100.0, trackers=(), tracker_history_days=60, tracker_every_s=300)
+                event_tags=SPORTS_TAGS, tag_pages=3, tag_top_n=120, sports_top_n=60, tag_min_volume24h=100.0, trackers=(), tracker_history_days=60, tracker_every_s=300)
 
 
 def _end(text):
@@ -38,18 +39,27 @@ def parse_market(m, cfg, now):
     if not isinstance(m, dict) or not m.get('conditionId') or not m.get('question'):
         return None
     tokens, outcomes, prices = _list(m.get('clobTokenIds')), _list(m.get('outcomes')), _list(m.get('outcomePrices'))
-    if not tokens or len(tokens) != 2 or not outcomes or [str(o).lower() for o in outcomes] != ['yes', 'no']:
+    if not tokens or len(tokens) != 2 or not outcomes or len(outcomes) != 2:
         return None
+    labels = [str(o).strip() for o in outcomes]
+    matchup = None
+    if [o.lower() for o in labels] != ['yes', 'no']:
+        # Team-labeled NFL moneylines use the first team as the YES slot.
+        start = _end(m.get('gameStartTime'))
+        if not (str(m.get('slug') or '').startswith('nfl-') and m.get('sportsMarketType') == 'moneyline'
+                and start and all(SP.team_key(o) for o in labels) and SP.team_key(labels[0]) != SP.team_key(labels[1])):
+            return None
+        matchup = (start, *labels)
     sched = m.get('feeSchedule') if isinstance(m.get('feeSchedule'), dict) else {}
     rate, exp = C.num(sched.get('rate')), C.num(sched.get('exponent'))
     from_market = rate is not None
     closed = bool(m.get('closed'))
     p0 = C.num(prices[0]) if prices else None
     return dict(condition_id=m['conditionId'], question=str(m['question'])[:300], slug=m.get('slug'), end_ts=_end(m.get('endDate')), yes_token=str(tokens[0]), no_token=str(tokens[1]),
-                fee_rate=rate if from_market else cfg['pm_fee_rate'], fee_exp=(exp or 1.0) if from_market else 1.0, fee_source='gamma_feeSchedule' if from_market else 'config_default',
+                fee_rate=rate if from_market else cfg['pm_fee_rate'], fee_exp=exp if from_market and exp is not None else 1.0, fee_source='gamma_feeSchedule' if from_market else 'config_default',
                 volume24h=C.num(m.get('volume24hr')), liquidity=C.num(m.get('liquidityNum')), closed=1 if closed else 0,
                 accepting=1 if m.get('acceptingOrders', m.get('active')) and m.get('enableOrderBook', True) and not closed else 0, resolved_yes=p0 if closed and p0 in (0.0, 1.0) else None,
-                rules=str(m.get('description') or '')[:1500], bid=C.num(m.get('bestBid')), ask=C.num(m.get('bestAsk')))
+                rules=str(m.get('description') or '')[:32768], matchup=matchup, bid=C.num(m.get('bestBid')), ask=C.num(m.get('bestAsk')))
 
 
 def parse_book(doc, token):
@@ -68,20 +78,25 @@ def parse_book(doc, token):
 
 def _store_market(feed, row, now):
     cols = ('condition_id', 'question', 'slug', 'end_ts', 'yes_token', 'no_token', 'fee_rate', 'fee_exp', 'fee_source', 'volume24h', 'liquidity', 'closed', 'accepting', 'resolved_yes', 'rules')
-    room = R.classify(dict(source='pm', title=row['question']))['rooms']
+    routes = R.classify(dict(source='pm', title=row['question']))['rooms']
+    room = 'sports' if row['matchup'] or SP.WIN.fullmatch(row['question']) or SP.DRAW.fullmatch(row['question']) else max(routes, key=lambda r: routes[r]['score'])
     feed.execute('INSERT OR REPLACE INTO mk_pm_markets(%s,room,source,fetched_at) VALUES(%s)' % (','.join(cols), ','.join('?' * (len(cols) + 3))),
-                 [row[c] for c in cols] + [max(room, key=lambda r: room[r]['score']), 'gamma:markets', now])
+                 [row[c] for c in cols] + [room, 'gamma:markets', now])
+    if row['matchup']:
+        feed.execute('INSERT OR REPLACE INTO mk_pm_matchups VALUES(?,?,?,?)', (row['condition_id'], *row['matchup']))
 
 
 def _tagged(cfg, now, feed, have):
     """Open markets of events under each `event_tags` slug (rule-driven series: daily temperature, post counts), busiest first, outside the volume-ranked set.
     Event lists are paged small (one daily-temperature page of 20 is ~1.7 MB). A bucket priced outside 3-97 cents is left out: orders refuse it anyway."""
-    rows = {}
+    rows, sports = {}, {}
     stamp = datetime.fromtimestamp(now, timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
     for tag in cfg['event_tags']:
+        is_sports = tag in SPORTS_TAGS
+        selected = sports if is_sports else rows
         for i in range(max(1, int(cfg['tag_pages']))):
             try:
-                evs = C.get_json('%s?%s' % (EVENTS, urllib.parse.urlencode(dict(tag_slug=tag, closed='false', end_date_min=stamp, order='volume24hr', ascending='false', limit=10, offset=10 * i))))
+                evs = C.get_json('%s?%s' % (EVENTS, urllib.parse.urlencode(dict(tag_slug=tag, closed='false', end_date_min=stamp, order='endDate' if is_sports else 'volume24hr', ascending='true' if is_sports else 'false', limit=10, offset=10 * i))))
             except Exception as exc:
                 C.status(feed, 'polymarket_tags', False, '%s %s: %s' % (tag, type(exc).__name__, str(exc)[:100]), now)
                 break
@@ -90,10 +105,20 @@ def _tagged(cfg, now, feed, have):
             for e in evs:
                 for m in (e.get('markets') or ()) if isinstance(e, dict) else ():
                     row = parse_market(m, cfg, now)
-                    if row and row['condition_id'] not in have and row['accepting'] and row['end_ts'] and row['end_ts'] > now \
-                            and (row['volume24h'] or 0) >= cfg['tag_min_volume24h'] and row['ask'] is not None and 0.03 <= row['ask'] <= 0.97:
-                        rows[row['condition_id']] = row
-    return sorted(rows.values(), key=lambda r: -(r['volume24h'] or 0))[:int(cfg['tag_top_n'])]
+                    if not row or row['condition_id'] in have or not row['accepting'] or not row['end_ts'] or row['end_ts'] <= now:
+                        continue
+                    if is_sports:
+                        if not (row['matchup'] or SP.WIN.fullmatch(row['question']) or SP.DRAW.fullmatch(row['question'])):
+                            continue
+                    elif (row['volume24h'] or 0) < cfg['tag_min_volume24h'] or row['ask'] is None or not 0.03 <= row['ask'] <= 0.97:
+                        continue
+                    selected[row['condition_id']] = row
+            if len(evs) < 10:
+                break
+    tagged = sorted(rows.values(), key=lambda r: -(r['volume24h'] or 0))[:int(cfg['tag_top_n'])]
+    used = {r['condition_id'] for r in tagged}
+    fixtures = sorted((r for cid, r in sports.items() if cid not in used), key=lambda r: r['end_ts'])
+    return tagged + fixtures[:int(cfg['sports_top_n'])]
 
 
 def _trackers(cfg, now, feed):
@@ -179,6 +204,7 @@ def tick(cfg, now, sleep=time.sleep):
         feed.execute('INSERT INTO mk_pm_quotes(token_id,condition_id,bid,bid_size,ask,ask_size,source,fetched_at) VALUES(?,?,?,?,?,?,?,?)', (token, cid, *q, 'clob:book', now))
         n_books += 1
     feed.execute('DELETE FROM mk_pm_quotes WHERE fetched_at<?', (now - 86400 * cfg['retention_days'],))
+    feed.execute('DELETE FROM mk_pm_matchups WHERE start_ts<?', (now - 86400 * cfg['retention_days'],))
     detail = 'markets=%d books_ok=%d books_unusable=%d held_markets=%d' % (len(ranked), n_books, n_bad, len(held_c))
     C.status(feed, 'polymarket', n_books > 0, detail, now)
     return detail

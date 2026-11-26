@@ -3,6 +3,7 @@ They live here because the repository's word guard keeps this plug-in's domain w
 import http.client
 import importlib.util
 import json
+import subprocess
 from pathlib import Path
 import re
 import sqlite3
@@ -73,7 +74,20 @@ def test_markets_route_carries_every_room_and_says_unknown_when_the_database_is_
     assert {b['lane'] for b in doc['rooms']['paper_labs']['books']} == {'polymarket', 'perps', 'stocks'} and doc['rooms']['coach']['lessons'] and doc['rooms']['lab']['rules']
     (fx['dir'] / 'markets.db').unlink()
     status, doc = get(fx, '/api/office/markets')
-    assert status == 200 and doc['state'] == 'unknown' and doc['reason'] == 'markets_db_missing' and doc['rooms'] == {}      # said, not zeroed
+    assert status == 200 and doc['state'] == 'known'          # each room is gated on its own database only
+    assert doc['ledger_boundary']['state'] in ('known', 'unknown')          # carried with every response that has a ledger path
+    assert {k for k, v in doc['rooms'].items() if v.get('state') == 'unknown'} == {'newsroom', 'situation', 'paper_labs', 'sports', 'explorer', 'memes', 'control'}
+    assert all(v['reason'] == 'markets_db_missing' for v in doc['rooms'].values() if v.get('state') == 'unknown') and doc['rooms']['coach']['lessons']      # said, not zeroed
+    (fx['dir'] / 'markets_ledger.db').unlink()
+    status, doc = get(fx, '/api/office/markets')
+    assert status == 200 and doc['state'] == 'unknown' and doc['reason'] == 'markets_db_missing' and doc['rooms'] == {}
+
+
+def test_the_adapter_keeps_a_room_level_unknown_out_of_the_room_data():
+    src = (FLOOR / 'static/office-adapter.js').read_text()
+    fn = re.search(r'const splitRooms = .*?;\n', src, re.S).group(0)
+    out = subprocess.run(['node', '-e', fn + 'console.log(JSON.stringify(splitRooms({state: "known", rooms: {coach: {lessons: []}, sports: {state: "unknown", reason: "markets_db_missing"}}})))'], capture_output=True, text=True, check=True).stdout
+    assert json.loads(out) == {'mk': {'coach': {'lessons': []}}, 'mkUnknown': {'sports': 'markets_db_missing'}}
 
 
 def test_a_hostile_headline_travels_as_data_and_the_page_scripts_never_build_markup(fx):
@@ -217,7 +231,16 @@ def test_halting_a_book_and_the_operator_note_need_the_token_and_exact_keys(fx):
     assert unknown[0] == 409 and json.loads(unknown[2])['reason'] == 'book_unknown'
     blank = post(fx, '/api/markets/say', dict(to_role='pm_trader', text='  '))
     assert blank[0] == 409 and json.loads(blank[2])['reason'] == 'text_required'
-    assert json.loads(post(fx, '/api/markets/say', dict(to_role='pm_trader', text='tighten'))[2]) == dict(state='recorded') and post(fx, '/api/markets/say', dict(text='x'))[0] == 400
+    data = dict(to_role='head', text='review')
+    assert post(fx, '/api/markets/say', data, token='x' * 32)[0] == 401
+    assert post(fx, '/api/markets/say', dict(to_role='no-such-role', text='review'))[0] == 409
+    status, _, raw = post(fx, '/api/markets/say', data)
+    note = json.loads(raw)
+    assert status == 200 and note == dict(state='recorded', note_id=2, recipient_n=1)
+    _, snapshot = get(fx, '/api/office/markets')
+    row = snapshot['rooms']['control']['operator_chat'][0]
+    assert row['id'] == note['note_id'] and row['delivery'] == 'pending' and row['delivered_n'] == 0
+    assert post(fx, '/api/markets/say', dict(text='x'))[0] == 400
 
 
 def test_halt_is_refused_when_the_page_is_read_only(tmp_path, monkeypatch):
@@ -237,7 +260,9 @@ def test_rooms_json_places_every_seat_in_a_room_and_none_of_the_dropped_ones():
     placed = {role for members in doc['rooms'].values() for role in members}
     assert set(THIRTEEN) <= placed and not placed & {'explorer', 'meme_scout', 'pm_critic'}
     assert set(doc['rooms']) >= {'newsroom', 'debate', 'trading', 'explorer', 'memes', 'coach', 'control', 'situation', 'sports', 'strategies', 'paper-labs', 'lab'}
-    assert {'copy_desk', 'perps_trader', 'stocks_trader', 'pm_trader'} <= set(doc['rooms']['trading']) and {'newsdesk', 'narrative'} <= set(doc['rooms']['newsroom']) and doc['rooms']['coach'] == ['coach']
+    paused = {'judge', 'judge_gpt', 'forensics', 'copy_desk', 'narrative', 'stocks_trader'}          # slim office 2026-11-26: parked in Control, out of the working rooms
+    assert set(doc['rooms']['control']) == paused and not paused & {r for k, m in doc['rooms'].items() if k != 'control' for r in m}
+    assert {'scout', 'perps_trader', 'pm_trader'} <= set(doc['rooms']['trading']) and {'newsdesk', 'pm_trader'} <= set(doc['rooms']['newsroom']) and 'scout' in doc['rooms']['memes'] and doc['rooms']['coach'] == ['coach'] and doc['rooms']['decision'] == ['head']
     assert not {r for r in THIRTEEN if r not in placed}                    # nothing falls back to the Research pile
     assert V.source_queries(json.loads((FLOOR / 'sources.json').read_text()), tuple(R.DEFAULT_DBS))      # the floor's queries validate
 

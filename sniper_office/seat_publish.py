@@ -19,8 +19,8 @@ ALLOWED=re.compile(r'(^|/)(\.env\.example|certifi/cacert\.pem|.*/test[^/]*\.pem)
 # Header plus key body: source that only names the marker (log redaction, this file) is not a key.
 PRIVATE=re.compile(rb'-----BEGIN [A-Z ]*PRIVATE KEY-----\s+[A-Za-z0-9+/]{32}')
 # Latest at 2026-10-30. A new SDK resets usage scope, so a bump restarts calibration: move these with the seat configs' sdk_version.
-SEAT_PINS={'claude-agent-sdk':'0.2.175','playwright':'1.64.1'}
-SEAT_CLI_SHA256='4487042b4c4f5d88d4568f68ae98aae0b1ffae58864cf57fb868641bc5f84594'   # the CLI 2.1.314 in that wheel
+SEAT_PINS={'claude-agent-sdk':'0.2.189','playwright':'1.65.2'}
+SEAT_CLI_SHA256='a2df1f41bb00250992926420d0063f89b127cb81abdd284dbefb80c50ff1d026'   # the CLI 2.1.332 in that wheel
 
 
 def _has_key(path):

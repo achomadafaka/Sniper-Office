@@ -180,22 +180,6 @@
     if (links instanceof Node) article.append(links);
     return article;
   }
-  function dailyResearch(report) {
-    if (!report?.sections) return section('Daily desk brief', line('The Researcher has not saved a daily brief.'));
-    const labels = {'what_changed': 'What changed', 'rates_and_inflation': 'Rates and inflation', 'crypto': 'Crypto',
-      'equities': 'Equities', 'geopolitics': 'Geopolitics', 'open_calls': 'Implications for open calls'};
-    return section('Daily desk brief', line(report.date),
-      ...Object.entries(labels).map(([key, label]) => {
-        const note = report.sections[key];
-        if (!note?.text) return null;
-        const citations = list(note.sources).map(item => {
-          const citation = block();
-          citation.append(source(item.url), ' ', text('span', item.date));
-          return citation;
-        });
-        return section(label, line(note.text), ...citations);
-      }));
-  }
   const events = (d, room) => list(d.activity).filter(event => event.room === room);
   const eventRows = (d, room) => table(room === 'newsroom' ? 'Headline activity' : 'Seat activity', ['When', 'Event', 'Item'], d.activity ? events(d, room) : null,
     row => [time(row.at), human(row.kind), row.title], row => row.item_id);
@@ -226,89 +210,21 @@
     }
   });
 
-  function caseFiles(files) {
-    if (files?.state !== 'ok') return section('Case files', line('Case files unavailable.'));
-    const counts = exposure => exposure
-      ? exposure.approved + ' entered · ' + exposure.working + ' working'
-      : 'Paper exposure unknown';
-    const stories = files.stories.map(story => {
-      const markets = text('ul');
-      for (const market of story.markets) {
-        const item = text('li', market.title || market.condition_id);
-        item.title = market.condition_id;
-        markets.append(item);
-      }
-      return block(text('h4', story.event || story.case_id),
-        line(story.state, story.jurisdiction, story.window, counts(story.exposure)),
-        story.markets.length ? markets : line('No linked markets.'));
-    });
-    return section('Case files', files.case_count > stories.length
-      ? line('Showing ' + stories.length + ' of ' + files.case_count + ' cases') : null,
-      files.unlinked ? line('Unlinked paper exposure: ' + counts(files.unlinked)) : null,
-      ...(stories.length ? stories : [line('No stories recorded.')]));
-  }
-
-  function marketDossiers(report) {
-    if (report?.state === 'unreadable') return section('Market dossiers', line('Dossier folder unreadable.'));
-    const entries = list(report?.rows);
-    return section('Market dossiers',
-      report?.worker?.state ? line('Worker: ' + human(report.worker.state),
-        Number.isFinite(report.worker.until) ? 'Until ' + utc(report.worker.until) : null) : null,
-      report?.total > entries.length ? line('Showing ' + entries.length + ' of ' + report.total + ' dossiers') : null,
-      ...(entries.length ? entries.map(row => {
-        const item = text('details');
-        item.append(text('summary', row.question || row.market_id));
-        if (row.state === 'unreadable') {
-          item.append(line('Dossier unreadable.'));
-          return item;
-        }
-        item.append(line(human(row.branch), row.pick_arm ? 'Pick: ' + human(row.pick_arm) : null,
-          row.turn?.state ? 'Scout: ' + human(row.turn.state) : null),
-          line(Number.isInteger(row.new) ? row.new + ' new trigger lines' : null,
-            Number.isFinite(row.updated_at) ? 'Updated ' + utc(row.updated_at) : null));
-        for (const [label, value] of [['Settling clause', row.settling_clause], ['Deciding fact', row.deciding_fact],
-          ['What settles early', row.settle_early], ['Scout summary', row.summary?.text]]) {
-          if (typeof value === 'string' && value.trim()) item.append(line(label + ': ' + value));
-        }
-        if (row.summary?.source || Number.isFinite(row.summary?.at)) {
-          const receipt = text('p');
-          if (row.summary.source) receipt.append(source(row.summary.source), ' · ');
-          receipt.append(Number.isFinite(row.summary.at) ? utc(row.summary.at) : 'Source time unknown');
-          item.append(receipt);
-        }
-        for (const question of list(row.open_questions)) item.append(line('Open question: ' + question));
-        item.append(table('Scout findings', ['Question', 'Finding', 'Source', 'Published'], row.gaps,
-          r => [r.question, r.finding, source(r.source), r.published_utc || 'Source time unknown']),
-          table('Timeline', ['Type', 'Evidence', 'Source', 'Source time', 'Clock', 'New to debate', 'Price before', 'Price after'],
-            row.timeline, r => [human(r.kind), r.text, source(r.source),
-              Number.isFinite(r.at) ? utc(r.at) : 'Source time unknown', r.clock ? human(r.clock) : null, r.is_new ? 'New' : null,
-              cents(r.mid_before ?? r.was), cents(r.mid_1h_after ?? r.now)], r => r.id));
-        if (row.timeline_omitted) item.append(line(row.timeline_omitted + ' earlier timeline records omitted'));
-        return item;
-      }) : [line('No dossiers recorded.')]));
-  }
-
   register({
-    id: 'research', title: 'Research', order: 40, seats: ['researcher', 'quant'],
-    figures(d) {
-      return [figure('Research completed in 1 h', d.stats?.research_1h)];
-    },
+    id: 'research', title: 'Research', order: 40, seats: [],
     summary(d) {
-      const counts = d.ideas?.proposal_counts, last = d.briefs?.[0];
-      const open = d.ideas?.proposals_open;
-      return block(last ? withTime([last.question, human(last.outcome)].filter(v => !missing(v)).join(' · '), last.at) : null,
-        line(Number.isFinite(open) ? open + ' open' : null, Number.isFinite(open) && Number.isFinite(counts?.built) ? counts.built + ' built' : null,
-          Number.isFinite(open) && Number.isFinite(counts?.parked) ? counts.parked + ' parked' : null));
+      const last = list(d.mk?.explorer?.notes).find(row => row.role === 'researcher');
+      return last ? withTime(last.topic, last.at) : null;
     },
     detail(d) {
-      return block(marketDossiers(d.market_dossiers), caseFiles(d.case_files), dailyResearch(d.daily_brief),
-      section('Research briefs', ...(d.briefs?.length ? d.briefs.map(row =>
-        researchCard(row, row.question, row.new_in_48h || row.story)) : [line('The desk has not saved a research brief here.')])),
-
-      table('Market prices', ['Market', 'YES bid', 'YES ask', 'Snapshot'], d.markets,
-        row => [row.question, cents(row.yes_bid), cents(row.yes_ask), time(row.at)]),
-      table('Proposals', ['Proposal', 'Seat', 'Status', 'Note'], d.ideas?.proposal_history,
-        row => [row.text, row.seat, human(row.status?.state), row.status?.note], row => row.id));
+      const explorer = d.mk?.explorer;
+      if (explorer?.state === 'unknown' || !Array.isArray(explorer?.notes)) {
+        return block(section('Research briefs', line('Unavailable', explorer?.reason ?? d.mkUnknown?.explorer)));
+      }
+      const notes = explorer.notes.filter(row => row.role === 'researcher');
+      return block(notes.length ? table('Research briefs', ['Topic', 'Saved', 'Why this', 'Notebook'],
+        notes, row => [row.topic, time(row.at), row.why_this, row.notebook], row => 'research-note-' + row.id)
+        : section('Research briefs', line('No Researcher briefs in the recent Explorer records.')));
     }
   });
 

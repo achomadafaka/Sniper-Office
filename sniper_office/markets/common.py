@@ -93,6 +93,9 @@ CREATE INDEX IF NOT EXISTS mk_routes_room ON mk_routes(room,routed_at);
 CREATE TABLE IF NOT EXISTS mk_story_places(news_id TEXT NOT NULL,code TEXT NOT NULL,name TEXT,lat REAL,lon REAL,classifier TEXT NOT NULL,at REAL NOT NULL,PRIMARY KEY(news_id,code,classifier));
 CREATE TABLE IF NOT EXISTS mk_sports_games(game_id TEXT PRIMARY KEY,league TEXT,start_ts REAL,home TEXT,away TEXT,state TEXT,home_imp REAL,away_imp REAL,fair_home REAL,odds_provider TEXT,
   home_score REAL,away_score REAL,source TEXT NOT NULL,fetched_at REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS mk_sports_lines(game_id TEXT PRIMARY KEY,fair_away REAL,fair_draw REAL,bookmaker_n INTEGER NOT NULL,
+  home_aliases TEXT NOT NULL,away_aliases TEXT NOT NULL,fetched_at REAL NOT NULL,bookmakers_json TEXT NOT NULL,changed_at REAL NOT NULL,observed_since REAL NOT NULL,min_bookmakers INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS mk_pm_matchups(condition_id TEXT PRIMARY KEY,start_ts REAL NOT NULL,first_team TEXT NOT NULL,second_team TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS mk_feed_status(feed TEXT PRIMARY KEY,at REAL NOT NULL,ok INTEGER NOT NULL,detail TEXT);
 '''
 
@@ -116,6 +119,9 @@ CREATE TABLE IF NOT EXISTS bk_skills(id INTEGER PRIMARY KEY AUTOINCREMENT,skill 
 CREATE TABLE IF NOT EXISTS bk_reviews(id INTEGER PRIMARY KEY AUTOINCREMENT,by_role TEXT NOT NULL,at REAL NOT NULL,review TEXT NOT NULL,priorities TEXT);
 CREATE TABLE IF NOT EXISTS bk_video_rules(rule_id TEXT PRIMARY KEY,role TEXT NOT NULL,source_url TEXT,title TEXT,rule_text TEXT NOT NULL,instrument TEXT,status TEXT NOT NULL,backtest_json TEXT,at REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS bk_operator_chat(id INTEGER PRIMARY KEY AUTOINCREMENT,at REAL NOT NULL,sender TEXT NOT NULL,to_role TEXT,text TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS bk_operator_note_delivery(receipt_id TEXT PRIMARY KEY,note_id INTEGER NOT NULL,actor_id TEXT NOT NULL,epoch_id TEXT NOT NULL,
+  generation INTEGER NOT NULL,delivered_at REAL,UNIQUE(note_id,actor_id));
+CREATE INDEX IF NOT EXISTS bk_operator_note_pending ON bk_operator_note_delivery(actor_id,epoch_id,generation,note_id) WHERE delivered_at IS NULL;
 '''
 
 

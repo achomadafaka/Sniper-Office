@@ -32,7 +32,7 @@ def test_router_other_and_threshold_and_meme_fields():
     r = rooms('Local council debates parking')
     assert list(r['rooms']) == ['other'] and r['meme'] is None
     m = rooms('Viral hippo escapes zoo and the internet renames it')['meme']
-    assert m['name'] and m['ticker'] and m['ticker'].isalpha() and len(m['ticker']) <= 8 and m['markers']
+    assert m['name'] == 'Hippo Escapes' and m['ticker'] is None and m['markers']
     assert R.meme_proposal('Quarterly results unchanged') is None
 
 
@@ -163,6 +163,9 @@ def test_story_tools(dbs):
     assert [s['news_id'] for s in call('story_list', t, room='stocks', min_score=50)[0]['stories']] == ['n0']
     assert call('story_list', t, room='bogus')[1]
     assert call('meme_list', t)[0]['candidates'][0]['meme'] == dict(name='Hippo', ticker='HIPPO')
+    assert not call('story_route', t, news_id='n2', room='memes', note='The clip has a visual hook.',
+                    meme_name='Zoo Break', meme_ticker='$zoo')[1]
+    assert api.meme_candidates(feed, NOW)[0]['ticker'] == 'ZOO'
     assert call('story_route', t, news_id='n3', room='crypto', note='mentions a token')[0]['classifier'] == 'seat:newsdesk'
     assert [s['news_id'] for s in call('story_list', t, room='crypto')[0]['stories']] == ['n3']
     assert call('story_route', t, news_id='n3', room='crypto', note='')[1] and call('story_route', t, news_id='zz', room='crypto', note='x')[1]
@@ -269,7 +272,7 @@ def test_api_shapes_for_the_floor_rooms(dbs):
     call('story_debate', FakeTools(tmp, role='pm_critic'), news_id='n1', text='bear case')
     nr = api.newsroom(feed, led, NOW + 5, pol)
     assert {'wire', 'calls', 'news_calls', 'debates', 'memes', 'feeds', 'room_counts'} <= set(nr)
-    assert [w['news_id'] for w in nr['wire']][0] == 'n0' and nr['wire'][0]['also_from'] == ['bbc'] and nr['calls'][0]['news_id'] == 'n1' and nr['debates']['n1'][0]['text'] == 'bear case' and nr['memes'][0]['ticker'] == 'HIPPO'
+    assert [w['news_id'] for w in nr['wire']][0] == 'n0' and nr['wire'][0]['also_from'] == ['bbc'] and nr['calls'][0]['news_id'] == 'n1' and nr['debates']['n1'][0]['text'] == 'bear case' and nr['memes'][0]['ticker'] is None
     sit = api.situation(feed, NOW + 5)
     assert sit['places'][0]['code'] == 'US' and sit['stories'][0]['title'] == 'Fed cuts rates' and 'perps' in sit['stories'][0]['rooms']
     assert api.strategy_lab(led)['strategies'] and api.paper_labs(feed, led, NOW + 5, pol)['books'][0]['book_id'] == 'pm-a'
@@ -277,7 +280,6 @@ def test_api_shapes_for_the_floor_rooms(dbs):
     assert ctl['books'][0]['halted'] is False and ctl['universe']['pm_markets'] == 1 and ctl['feeds'][0]['feed'] == 'news'
     assert api.book_halt(led, 'pm-a', True, 'operator', NOW)['halted'] is True and api.book_halt(led, 'nope', True, 'operator', NOW)['reason'] == 'book_unknown'
     assert B.place(led, feed, 'pm-a', 'polymarket', dict(condition_id=COND, side='YES', usd=50, tp_price=.7, sl_price=.3, strategy='pm-news-scalp', **PLAN), NOW, pol)['reason'] == 'book_halted'
-    assert api.operator_say(led, 'operator', 'pm_trader', 'size down', NOW)['state'] == 'recorded' and api.operator_say(led, 'o', None, ' ', NOW)['state'] == 'refused'
     assert api.coach(led)['lessons'] == [] and api.explorer(feed, led, NOW)['notes'] == [] and api.video_lab(led)['rules'] == [] and api.sports(feed, NOW)['games'] == []
     json.dumps([nr, sit, ctl])      # all of it is plain JSON
 

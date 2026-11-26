@@ -18,6 +18,7 @@ DEADLINE_S = 1.
 MAX_SEATS = 64
 EVENTS = 100
 MAIL = 100
+PER_SEAT = 40        # newsroom: newest events and mail per seat, read before the global caps
 DAY = 86400.
 
 
@@ -475,7 +476,7 @@ def _floor_event(r, seat, now):
     return r
 
 
-def floor_feed(office_db, quota_db, *, now, after=None, mail_after=None, actor=None, limit=64):
+def floor_feed(office_db, quota_db, *, now, after=None, mail_after=None, actor=None, limit=64, per_seat=None):
     """Roster, newest events, mail, tasks, per-seat activity, open requests: the validated base of `newsroom`.
     Raises ValueError for a bad cursor, limit or actor. Sealed seats are withheld, not unknown."""
     after, mail_after = _cursor(after), _cursor(mail_after)
@@ -506,6 +507,15 @@ def floor_feed(office_db, quota_db, *, now, after=None, mail_after=None, actor=N
             current = {r['actor_id']: r for r in roster['items']}
 
             def tail(table, cursor, *, by_actor=False):
+                if per_seat and cursor is None and actor is None:    # newest N per seat, so a chatty seat cannot push a quiet one out of the window
+                    who = 'actor_id=?' if table == 'office_v2_events' else '(from_actor_id=? OR to_actor_id=?)'
+                    rows = {}
+                    for a in current:
+                        for r in conn.execute('SELECT * FROM ' + table + ' WHERE ' + who + ' ORDER BY seq DESC LIMIT ?', (*[a] * who.count('?'), per_seat)):
+                            rows[r['seq']] = r
+                    part = _floor_part();rows = sorted(rows.values(), key=lambda r: r['seq'], reverse=True)
+                    part['cursor'] = str(rows[0]['seq']) if rows else None
+                    return rows, part
                 part = _floor_part();where = [];args = []
                 if cursor is not None:
                     where.append('seq>?');args.append(cursor)
@@ -716,10 +726,161 @@ def operator_chat(office_db, quota_db, *, now, layout=NO_ROOMS):
     return dict(status='ok', asks=asks, messages=messages, open_by_seat={}, damaged_rows=0)
 
 
+def _joined_thought(messages):
+    """The newest thought; Hermes streams each token as its own thought, so a run of short fragments (newest first) is joined back into text.
+    ponytail: joins only the 16 thoughts the feed keeps per seat; buffer deltas in hermes_child.py if whole sentences matter."""
+    if not messages or len(messages[0]['text'].strip()) >= 20:
+        return messages[0] if messages else None
+    run = []
+    for m in messages:
+        if len(m['text'].strip()) >= 20:
+            break
+        run.append(m)
+    return dict(messages[0], text=''.join(m['text'] for m in reversed(run)).strip())
+
+
+def _grouped_mail(mail):
+    """Newest first; one text a sender sent to several seats is one row, `to_all` naming every recipient newest first (`to` stays the newest one)."""
+    rows = {}
+    for m in sorted(mail, key=lambda m: m['at'], reverse=True):
+        row = rows.setdefault((m['from'], m['text']), dict(m, to_all=[]))
+        if m['to'] not in row['to_all']:
+            row['to_all'].append(m['to'])
+    return list(rows.values())
+
+
+def _per_seat(items, n, cap, key='seat'):
+    """The newest `n` per seat always, then the newest of the rest up to `cap`, newest first."""
+    count, keep = {}, []
+    for e in items:
+        count[e[key]] = count.get(e[key], 0) + 1
+        keep.append(count[e[key]] <= n)
+    rest = cap - sum(keep)
+    return [e for e, k in zip(items, keep) if k or (rest := rest - 1) >= 0]
+
+PROSE_TARGET_RE = re.compile(r"\btarget is\s+(\d+)\s+(.+?)\s+by\s+(\d{1,2}:\d{2}\s*UTC)\b", re.I)
+TARGET_RE = re.compile(r'\bTARGET\s+([a-z_]+)\s*:\s*(\d+)\s+(.+?)\s+by\s+(\d{1,2}:\d{2}\s*UTC)\b', re.I)   # Head writes 'TARGET <role>: <count> <what> by <HH:MM UTC>'
+PRODUCTS = (     # (kind, role column, time column, text, table, where): a seat's real products in the markets ledger
+    ('strategy', 'owner_role', 'created_at', "lane || ': ' || COALESCE(hypothesis,strategy_id)", 'bk_strategies', ''),
+    ('news_call', 'role', 'at', "COALESCE(question,condition_id) || ' ' || side", 'bk_calls', ''),
+    ('brief', 'role', 'at', 'topic', 'bk_explorer', ''),
+    ('review', 'by_role', 'at', 'review', 'bk_reviews', ''),
+    ('loss_review', 'by_role', 'at', "COALESCE(cause,'') || ' -> ' || COALESCE(change,'')", 'bk_lessons', ''),
+    ('order', 'b.role', 'p.entry_at', "p.lane || ' ' || p.side || ' ' || COALESCE(p.label,p.instrument)", 'bk_positions p JOIN bk_books b USING(book_id)', ''),
+)
+
+
+def _ledger_products(path, day):
+    """({role: [(kind, at, text)]} newest first, {role: {kind: exact count since day}}); None when the markets ledger cannot be read (unknown, not empty)."""
+    if not path:
+        return None
+    try:
+        with _ro(path) as conn:
+            out, counts = {}, {}
+            for kind, who, at, text, table, _ in PRODUCTS:
+                if not _has(conn, table.split()[0]):
+                    continue
+                for role, t, body in conn.execute('SELECT %s,%s,%s FROM %s WHERE %s IS NOT NULL ORDER BY %s DESC LIMIT 20' % (who, at, text, table, at, at)):    # latest only; counts below are exact
+                    out.setdefault(role, []).append((kind, t, _title(body or '', 300)))
+                for role, n in conn.execute('SELECT %s,count(*) FROM %s WHERE %s>=? GROUP BY 1' % (who, table, at), (day,)):
+                    counts.setdefault(role, {})[kind] = counts.get(role, {}).get(kind, 0) + n
+            return out, counts
+    except sqlite3.Error:
+        return None
+
+
+def _ledger_fills(office_db, ledgers, roles):
+    """{role: [(at, text)]} paper-ledger fills, matched to the seat that requested them (order_id is the request_id)."""
+    asked = {}
+    try:
+        with _ro(office_db) as conn:
+            if _has(conn, 'desk_paper_requests'):
+                for rid, actor in conn.execute("SELECT request_id,actor_id FROM desk_paper_requests WHERE kind='order' ORDER BY at DESC LIMIT 2000"):
+                    if actor in roles:
+                        asked[rid] = roles[actor]
+    except sqlite3.Error:
+        return {}, set()
+    out = {}
+    for path in ledgers:
+        try:
+            with _ro(path) as conn:
+                for oid, at in conn.execute('SELECT order_id,filled_at FROM orders WHERE filled_at IS NOT NULL ORDER BY filled_at DESC LIMIT 2000'):
+                    if oid in asked:
+                        out.setdefault(asked[oid], []).append((at, 'paper order ' + str(oid)[:8]))
+        except sqlite3.Error:
+            continue
+    return out, set(asked.values())
+
+
+def _head_mail(office_db, roles, day):
+    """Head's mail since the start of yesterday, straight from the DM table and grouped by text. The floor feed keeps only mail bound to the recipient's
+    current session, so a target sent before a seat rotated would vanish; the sender here is the rostered Head actor, which is all the floor needs."""
+    head = next((a for a, r in roles.items() if r == 'head'), None)
+    if head is None:
+        return []
+    try:
+        with _ro(office_db) as conn:
+            rows = conn.execute('SELECT to_actor_id,created_at,text FROM office_dm_events WHERE from_actor_id=? AND created_at>=? ORDER BY seq DESC LIMIT 500', (head, day - DAY)).fetchall()
+    except sqlite3.Error:
+        return []
+    return _grouped_mail([{'from': 'head', 'to': roles.get(to, to), 'at': at, 'text': _title(text, 4000)} for to, at, text in rows if _finite(at) and isinstance(text, str)])
+
+
+def desk_now(office_db, seats, roles, mail, requests, layout, *, now, ledgers=(), extra=None):
+    """One row per working seat: state, Head's newest assignment and newest TARGET, the seat's newest real product, newest mail/request evidence, and today's counts.
+    A count is None when its source is not readable or the seat has no such book; the page says unknown."""
+    day = now - now % DAY
+    paused = [r for r in (layout['rooms'].get('control') or []) if r in seats]
+    read = _ledger_products((extra or {}).get('markets_ledger'), day)
+    products, counts = read if read is not None else (None, None)
+    fills, fill_roles = _ledger_fills(office_db, ledgers, roles)
+    lane_roles = {r for r, items in (products or {}).items() if any(k == 'order' for k, _, _ in items)}
+    sent = {}
+    try:
+        with _ro(office_db) as conn:
+            for actor, n in conn.execute('SELECT from_actor_id,count(*) FROM office_dm_events WHERE created_at>=? GROUP BY from_actor_id', (day,)):
+                sent[roles.get(actor, actor)] = n
+        mails_known = True
+    except sqlite3.Error:
+        mails_known = False
+    head_mail = _head_mail(office_db, roles, day)
+    rows = []
+    for role, s in seats.items():
+        if role in paused:
+            continue
+        mine = [(k, t, x) for k, t, x in (products or {}).get(role, [])] + [('order', t, x) for t, x in fills.get(role, [])]
+        mine.sort(key=lambda p: p[1], reverse=True)
+        to_me = [m for m in head_mail if role in m['to_all'] and role != 'head']
+        target = None
+        for m in (m for m in to_me if m['at'] >= day):      # a target is for the current UTC day only
+            hit = next((h.groups()[1:] for h in TARGET_RE.finditer(m['text']) if h.group(1).lower() == role), None)
+            if hit is None and len(m.get('to_all', [m['to']])) == 1:      # prose to this seat alone: "Today's target is 2 <what> by 18:00 UTC"
+                hit = (h := PROSE_TARGET_RE.search(m['text'])) and h.groups()
+            if hit:
+                target = dict(count=int(hit[0]), what=hit[1], due=' '.join(hit[2].split()), at=m['at']);break
+        evidence = sorted([dict(kind='mail', at=m['at'], text=m['text']) for m in mail if m['from'] == role][:1] + [dict(kind='request', at=q['at'], text=q['text']) for q in requests if q['seat'] == role][:1],
+                          key=lambda e: e['at'], reverse=True)
+        has_book = role in fill_roles or role in lane_roles
+        kinds = dict((counts or {}).get(role, {}))
+        fills_today = sum(1 for t, _ in fills.get(role, []) if t >= day)      # ponytail: bounded to the newest 2000 requests and fills; fine at a few hundred a day
+        kinds['order'] = kinds.get('order', 0) + fills_today
+        rows.append(dict(role=role, status=s['status'] or 'idle', sleep_until=s['sleep_until'], parked_reason=s['parked_reason'], current_tool=s['last_tool'] if s['status'] == 'working' else None,
+                         thought=s['last_thought'], thought_at=s['last_thought_at'],
+                         assignment=dict(at=to_me[0]['at'], text=to_me[0]['text'], target=target) if to_me else None,
+                         last_output=dict(kind=mine[0][0], at=mine[0][1], text=mine[0][2]) if mine else None,
+                         last_evidence=evidence[0] if evidence else None,
+                         today=dict(orders=kinds['order'] if has_book else None,
+                                    outputs=sum(n for k, n in kinds.items() if k != 'order') if counts is not None else None,
+                                    by_kind={k: n for k, n in kinds.items() if k != 'order'} if counts is not None else None,
+                                    mails=sent.get(role, 0) if mails_known else None)))
+    return dict(as_of=now, day_start=day, seats=rows, paused=paused,
+                coverage=dict(markets_ledger='known' if products is not None else 'unavailable', paper_ledgers=len(ledgers), mail='known' if mails_known else 'unavailable'))
+
+
 def newsroom(office_db, quota_db, *, now, ledgers=(), layout=NO_ROOMS, queries=None, extra=None):
     """What the floor page draws: seats by role with their real state, the rooms they sit in, a live feed of mail, requests, wakes and tool calls, and the paper book.
     Everything this store does not hold is absent, not zero: the page says unknown."""
-    feed = floor_feed(office_db, quota_db, now=now, limit=200)
+    feed = floor_feed(office_db, quota_db, now=now, limit=200, per_seat=PER_SEAT)
     out = dict(state=feed['state'], as_of=feed['as_of'], office=dict(state='unknown', epoch=None, heartbeat_at=None), rooms={r: [] for r in layout['rooms']}, seats=None, activity=None, mail=None,
                requests=None, stats=None, tasks=None, sources=sources(queries or {}, office_db, quota_db, ledgers, extra) if _finite(now) else {},
                book=book(ledgers, now=now) if _finite(now) else dict(state='unknown', reason='clock_unknown', books=[], last_closed=[]))
@@ -734,7 +895,7 @@ def newsroom(office_db, quota_db, *, now, ledgers=(), layout=NO_ROOMS, queries=N
         a, kind = s['activity'], s['activity']['kind']
         doing = {'working': ('tool ' + s['current_tool']) if s['current_tool'] else 'awake', 'sleeping': 'sleeping until ' + time.strftime('%H:%M UTC', time.gmtime(a['until'])) if a['until'] else 'sleeping',
                  'parked': 'parked: ' + (a['reason'] or 'reason unknown'), 'idle': 'between wakes'}.get(kind)
-        thought = s['messages'][0] if s['messages'] else None
+        thought = _joined_thought(s['messages'])
         seats[s['role']] = dict(status=kind if kind in ('working', 'sleeping', 'parked') else None, last_action=doing, last_at=s['last_event_at'], last_tool=s['last_tool'], wakes_today=s['wakes_today'],
                                 tokens_today=s['tokens_today'], unread_mail=unread.get(s['actor_id']), last_thought=_title(thought['text'], 400) if thought else None,
                                 last_thought_at=thought['corrected_at'] if thought else None, actor_id=s['actor_id'], sleep_until=a['until'], parked_reason=a['reason'], requests=seen.get(s['actor_id'], {}).get('requests'),
@@ -759,13 +920,15 @@ def newsroom(office_db, quota_db, *, now, ledgers=(), layout=NO_ROOMS, queries=N
         else:
             continue
         activity.append(dict(kind=kind, room=room_of(e['actor_id']), item_id=e['event_id'], at=e['corrected_at'], title=title, seat=named(e['actor_id'])))
-    mail = [dict(**{'from': named(m['from_actor_id']), 'to': named(m['to_actor_id'])}, at=m['created_at'], text=_title(m['text'], 600), id=m['message_id']) for m in feed['mail']['items']]
+    mail = [dict(**{'from': named(m['from_actor_id']), 'to': named(m['to_actor_id'])}, at=m['created_at'], text=_title(m['text'], 4000), id=m['message_id']) for m in feed['mail']['items']]
     for m, raw in zip(mail, feed['mail']['items']):
         activity.append(dict(kind='mail', room=room_of(raw['from_actor_id'], raw['to_actor_id']), item_id=m['id'], at=m['at'], title='%s to %s: %s' % (m['from'], m['to'], _title(m['text'], 100)), seat=m['to'] if m['from'] == 'operator' else m['from'], **{'from': m['from'], 'to': m['to']}))
     activity.sort(key=lambda e: e['at'], reverse=True)
     requests = [dict(seat=named(q['actor_id']), at=q['corrected_at'], text=_title(q['text'], 600)) for q in feed['questions']['items']]
+    grouped = _grouped_mail(mail)
+    out['desk_now'] = desk_now(office_db, seats, roles, grouped, requests, layout, now=now, ledgers=ledgers, extra=extra)
     out.update(tasks=[dict(seat=named(t['actor_id']), **{k: t[k] for k in ('task_id', 'status', 'title', 'note')}) for t in feed['tasks']['items']] if feed['tasks']['state'] != 'unknown' else None,
-               seats=seats, activity=activity[:80], mail=sorted(mail, key=lambda m: m['at'], reverse=True)[:20], requests=requests[:40],
+               seats=seats, activity=_per_seat(activity, 10, 80), mail=_per_seat(grouped, 10, MAIL, key='from'), requests=requests[:40],
                stats=dict(requests=len(requests), tool_calls_1h=_tool_calls(office_db, now)),
                office=dict(state='running' if any(v['status'] == 'working' for v in seats.values()) else 'quiet', epoch=feed['roster']['items'][0]['epoch_id'] if feed['roster']['items'] else None,
                          heartbeat_at=max((v['last_at'] for v in seats.values() if v['last_at'] is not None), default=None)))

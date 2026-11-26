@@ -22,25 +22,35 @@ def _unknown(reason):
 def markets(markets_db, ledger_db, *, now, cfg=None):
     """Every markets room payload in one read (sniper_office.markets.api, read-only connections): {state, as_of, rooms: {room: payload or {state: unknown, reason}}}. A missing database or table is unknown, never an empty success."""
     from sniper_office.markets import api as MA, books as MB, common as MC
-    if not (markets_db and ledger_db and Path(markets_db).is_file() and Path(ledger_db).is_file()):
-        return dict(state='unknown', reason='markets_db_missing', as_of=now, rooms={})
+    def open_ro(path):
+        if not (path and Path(path).is_file()):
+            return None, 'markets_db_missing'
+        try:
+            return MC.ro(path), None
+        except sqlite3.Error:
+            return None, 'markets_db_unreadable'
+    (feed, feed_bad), (led, led_bad) = open_ro(markets_db), open_ro(ledger_db)
+    boundary = MA.ledger_boundary(ledger_db) if ledger_db else None   # the active ledger's epoch start and archive, read apart from the feed
+    if feed is None and led is None:
+        return dict(state='unknown', reason=feed_bad, as_of=now, rooms={}, ledger_boundary=boundary)
     pol = MB.policy(cfg)
     rooms = {}
-    try:
-        feed, led = MC.ro(markets_db), MC.ro(ledger_db)
-    except sqlite3.Error:
-        return dict(state='unknown', reason='markets_db_unreadable', as_of=now, rooms={})
-    try:
-        for name, call in (('newsroom', lambda: MA.newsroom(feed, led, now, pol)), ('situation', lambda: MA.situation(feed, now)), ('strategies', lambda: MA.strategy_lab(led)),
-                           ('paper_labs', lambda: MA.paper_labs(feed, led, now, pol)), ('sports', lambda: MA.sports(feed, now)), ('explorer', lambda: MA.explorer(feed, led, now)),
-                           ('memes', lambda: MA.meme_candidates(feed, now)), ('coach', lambda: MA.coach(led)), ('lab', lambda: MA.video_lab(led)), ('control', lambda: MA.control(feed, led, now, pol))):
+    try:   # each room is gated on the databases it reads, and a failed room says why instead of looking empty
+        for name, needs, call in (('newsroom', 'fl', lambda: MA.newsroom(feed, led, now, pol)), ('situation', 'f', lambda: MA.situation(feed, now)), ('strategies', 'l', lambda: MA.strategy_lab(led)),
+                                  ('paper_labs', 'fl', lambda: MA.paper_labs(feed, led, now, pol)), ('sports', 'f', lambda: MA.sports(feed, now)), ('explorer', 'fl', lambda: MA.explorer(feed, led, now)),
+                                  ('memes', 'f', lambda: MA.meme_candidates(feed, now)), ('coach', 'l', lambda: MA.coach(led)), ('lab', 'l', lambda: MA.video_lab(led)), ('control', 'fl', lambda: MA.control(feed, led, now, pol))):
+            missing = ('f' in needs and feed is None and feed_bad) or ('l' in needs and led is None and led_bad)
+            if missing:
+                rooms[name] = _unknown(missing)
+                continue
             try:
                 rooms[name] = call()
             except (sqlite3.Error, KeyError, TypeError, ValueError) as exc:
                 rooms[name] = _unknown('%s:%s' % (type(exc).__name__, str(exc)[:80]))
     finally:
-        feed.close();led.close()
-    return dict(state='known', as_of=now, rooms=rooms)
+        for c in (feed, led):
+            c and c.close()
+    return dict(state='known', as_of=now, rooms=rooms, ledger_boundary=boundary)
 
 
 def halt_book(ledger_db, book_id, halted, reason, *, now):
@@ -55,13 +65,13 @@ def halt_book(ledger_db, book_id, halted, reason, *, now):
         led.close()
 
 
-def say(ledger_db, to_role, text, *, now):
+def say(ledger_db, office_db, to_role, text, *, now):
     from sniper_office.markets import api as MA, common as MC
     if not ledger_db or not Path(ledger_db).is_file():
         return dict(state='refused', reason='ledger_missing')
     led = MC.connect(ledger_db, MC.LEDGER_SCHEMA)
     try:
-        return MA.operator_say(led, 'operator', str(to_role or '')[:40] or None, text, now)
+        return MA.operator_say(led, office_db, to_role, text, now)
     finally:
         led.close()
 
@@ -400,6 +410,54 @@ def _since(query):
     return float(raw) if raw else None
 
 
+TOOL_REQUEST_DISPOSITIONS = Path(__file__).resolve().parent.parent / 'config' / 'tool_request_dispositions.json'
+TOOL_REQUEST_LIMIT = 500
+
+
+def tool_requests(office_db, *, now):
+    """Recent seat requests joined to the Toolsmith's explicit dispositions by event ID."""
+    dispositions = 'known'
+    try:
+        manifest = json.loads(TOOL_REQUEST_DISPOSITIONS.read_text())
+    except FileNotFoundError:
+        manifest, dispositions = {}, 'unavailable'
+    except (OSError, UnicodeError):
+        return dict(_unknown('dispositions_unavailable'), as_of=now)
+    except ValueError:
+        return dict(_unknown('dispositions_invalid'), as_of=now)
+    if not isinstance(manifest, dict):
+        return dict(_unknown('dispositions_invalid'), as_of=now)
+    for event_id, item in manifest.items():
+        if not isinstance(item, dict):
+            return dict(_unknown('dispositions_invalid:' + event_id[:100]), as_of=now)
+        state, reason, tool = (item.get(field) for field in ('state', 'reason', 'tool_name'))
+        if (state not in ('building', 'shipped', 'refused') or not isinstance(reason, str)
+                or (state == 'refused' and not reason.strip())
+                or (tool is not None and (not isinstance(tool, str) or not tool.strip()))
+                or (state == 'shipped' and tool is None)):
+            return dict(_unknown('dispositions_invalid:' + event_id[:100]), as_of=now)
+    try:
+        with V._ro(office_db) as conn:
+            events = conn.execute(
+                '''SELECT e.event_id,r.role,e.corrected_at,e.text,e.refs_json
+                   FROM office_v2_events e LEFT JOIN office_v2_roster r ON r.actor_id=e.actor_id
+                   WHERE e.kind='request' AND e.corrected_at BETWEEN 0 AND ?
+                   ORDER BY e.seq DESC LIMIT ?''',
+                (now, TOOL_REQUEST_LIMIT + 1),
+            ).fetchall()
+    except (sqlite3.Error, OSError):
+        return dict(_unknown('requests_unavailable'), as_of=now)
+    items = []
+    for event_id, role, at, text, refs_json in events[:TOOL_REQUEST_LIMIT]:
+        refs = V._refs(refs_json)
+        disposition = manifest.get(event_id, {})
+        items.append(dict(id=event_id, role=role, at=at, text=V._title(text, 2000), kind=V._title(refs.get('kind'), 64),
+                          why=V._title(refs.get('why'), 500), state=disposition.get('state', 'new'),
+                          reason=V._title(disposition.get('reason'), 500), tool_name=V._title(disposition.get('tool_name'), 100) or None))
+    return dict(state='known', as_of=now, dispositions=dispositions, limited=len(events) > TOOL_REQUEST_LIMIT, items=items)
+
+
+
 def routes(cfg, dbs):
     """(gets, posts): gets maps a path to fn(query, now) -> doc; posts maps a path to (exact body keys, fn(body, now) -> doc). A ValueError from a function is a 400 to the caller."""
     ledgers = cfg.get('ledgers') or ()
@@ -413,9 +471,10 @@ def routes(cfg, dbs):
     def note(body, now):
         if not isinstance(body['to_role'], str) or not isinstance(body['text'], str):
             raise ValueError('say_body')
-        return say(dbs['markets_ledger'], body['to_role'], body['text'], now=now)
+        return say(dbs['markets_ledger'], cfg['office_db'], body['to_role'], body['text'], now=now)
 
-    gets = {'/api/office/markets': lambda q, now: markets(dbs['markets'], dbs['markets_ledger'], now=now),
+    gets = {'/api/office/tool-requests': lambda q, now: tool_requests(cfg['office_db'], now=now),
+            '/api/office/markets': lambda q, now: markets(dbs['markets'], dbs['markets_ledger'], now=now),
             '/api/office/live': lambda q, now: live(cfg['office_db'], dbs['j7'], ledgers, now=now, since=_since(q)),
             '/api/office/services': lambda q, now: services(cfg['office_db'], dbs['j7'], now=now, guard_file=cfg.get('guard_file'), creator_dir=cfg.get('creator_dir'), clock_file=cfg.get('clock_file')),
             '/api/office/token-names': lambda q, now: dict(names=names.lookup(parse_ids(q.get('ids', [''])[0]), now) if names else {}, lookup=names is not None)}

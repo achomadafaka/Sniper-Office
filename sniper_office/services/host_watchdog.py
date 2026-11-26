@@ -1,7 +1,7 @@
 """Host health watchdog: the producer of the guard file that host_guard.external_guard() and the supervisor read. One host process, stdlib, read-only on the host.
 
 It replaces the source project's host monitor + watchdog + wake timer in one loop. Each second it samples CPU and IO pressure (/proc/pressure, `some avg10`), MemAvailable, the age of the
-heartbeat files named in the config (the seat hosts' own heartbeats, in place of the source's funded-runner heartbeat) and, if asked, whether the office cgroup caps are applied. It writes
+heartbeat files named in the config (the seat hosts' own heartbeats, in place of the source's funded-runner heartbeat), the task count of `pids_cgroup` (the seat user's slice) and, if asked, whether the office cgroup caps are applied. It writes
     {"state":"ready","reason":null,"at":T,...}   or   {"state":"paused","reason":"cpu_pressure",...}
 atomically. Unknown telemetry pauses at once. A pressure pause lifts only after `resume_after_s` (900) of continuous health; a pause for any other reason (caps, telemetry) never lifts by itself
 (an operator removes the file or restarts with --initialize). With `kill_file` set (an office.slice cgroup.kill) a new pause also writes 1 there: opt-in, off by default.
@@ -17,8 +17,8 @@ from .. import host_guard
 from . import common
 
 POLICY = 'office-host-guard-v1'
-AUTO_RESUME = frozenset({'cpu_pressure', 'io_pressure', 'memory_available', 'heartbeat'})
-DEFAULTS = dict(psi_max=0.20, mem_min_bytes=4 * 1024 ** 3, heartbeat_max_age_s=30., heartbeat_breaches=2, resume_after_s=900., interval_s=1.)
+AUTO_RESUME = frozenset({'cpu_pressure', 'io_pressure', 'memory_available', 'heartbeat', 'pids_pressure'})
+DEFAULTS = dict(psi_max=0.20, mem_min_bytes=4 * 1024 ** 3, heartbeat_max_age_s=30., heartbeat_breaches=2, resume_after_s=900., interval_s=1., pids_max_frac=0.8)
 
 
 def read_psi(kind, proc='/proc/pressure'):
@@ -35,6 +35,13 @@ def read_mem(path='/proc/meminfo'):
     raise ValueError('memory_unknown')
 
 
+def read_pids(cgroup):
+    """[current, max] tasks of a cgroup (the seat user's slice); max is None when uncapped. Threads count: a seat near its cap fails to start threads and browsers mid-wake."""
+    cur = int(Path(cgroup, 'pids.current').read_text())
+    cap = Path(cgroup, 'pids.max').read_text().strip()
+    return [cur, None if cap == 'max' else int(cap)]
+
+
 def heartbeat_age(path, now):
     try:
         beat = json.loads(Path(path).read_text())
@@ -45,11 +52,16 @@ def heartbeat_age(path, now):
 
 
 def sample(cfg, now, *, psi=read_psi, mem=read_mem):
-    out = dict(ts=now, cpu=None, io=None, mem=None, heartbeats={}, caps=None, telemetry_error=False)
+    out = dict(ts=now, cpu=None, io=None, mem=None, pids=None, heartbeats={}, caps=None, telemetry_error=False)
     try:
         out['cpu'], out['io'], out['mem'] = psi('cpu'), psi('io'), mem()
     except (OSError, ValueError, KeyError):
         out['telemetry_error'] = True
+    if cfg.get('pids_cgroup'):
+        try:
+            out['pids'] = read_pids(cfg['pids_cgroup'])
+        except (OSError, ValueError):
+            out['telemetry_error'] = True
     for name in cfg.get('heartbeat_files', []):
         out['heartbeats'][name] = heartbeat_age(name, now)
     if cfg.get('office_cgroup'):
@@ -76,7 +88,9 @@ class Guard:
             if self.breaches[name] >= c['heartbeat_breaches']:
                 self.healthy_since = None
                 return 'heartbeat'
-        reason = ('cpu_pressure' if s['cpu'] > c['psi_max'] else 'io_pressure' if s['io'] > c['psi_max'] else 'memory_available' if s['mem'] < c['mem_min_bytes'] else None)
+        pids = s.get('pids')
+        reason = ('cpu_pressure' if s['cpu'] > c['psi_max'] else 'io_pressure' if s['io'] > c['psi_max'] else 'memory_available' if s['mem'] < c['mem_min_bytes']
+                  else 'pids_pressure' if pids and pids[1] and pids[0] > c['pids_max_frac'] * pids[1] else None)
         if reason:
             self.healthy_since = None
             return reason
@@ -113,6 +127,8 @@ def step(cfg, guard, now, *, psi=read_psi, mem=read_mem, kill=None):
         if not paused_before and cfg.get('kill_file') and kill is not None:
             kill(cfg['kill_file'])
     doc['sample'] = {k: s[k] for k in ('cpu', 'io', 'mem')}
+    if s['pids'] is not None:
+        doc['sample']['pids'] = s['pids']
     common.write_atomic(path, doc)
     return doc
 

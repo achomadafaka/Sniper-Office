@@ -206,7 +206,7 @@ def test_news_tick_ingests_routes_dedups_and_polls_on_schedule(fake, dbs):
     assert {r['room'] for r in feed.execute("SELECT room FROM mk_routes r JOIN mk_news n USING(news_id) WHERE n.title LIKE 'Bitcoin%'")} >= {'crypto'}
     assert {r['room'] for r in feed.execute("SELECT room FROM mk_routes r JOIN mk_news n USING(news_id) WHERE n.title LIKE 'Fed%'")} >= {'perps', 'polymarket'}     # macro, and overlaps the open Fed market
     hippo = feed.execute("SELECT * FROM mk_routes WHERE room='memes'").fetchone()
-    assert hippo['meme_name'] and hippo['meme_ticker']
+    assert hippo['meme_name'] == 'Hippo Escapes' and hippo['meme_ticker'] is None
     errs = [r['error'] for r in feed.execute("SELECT error FROM mk_news_polls WHERE status='error'")]
     assert any('boom' in e for e in errs) and any('url_refused' in e for e in errs)
     n_calls = len(fake.calls)
@@ -230,8 +230,7 @@ def test_sports_moneyline_devig_and_edges(fake, dbs):
     assert g['fair_home'] == pytest.approx((2 / 3) / ((2 / 3) + 100 / 270)) and g['odds_provider'] == 'Book'
     feed.execute("INSERT INTO mk_pm_markets(condition_id,question,yes_token,no_token,closed,accepting,source,fetched_at) VALUES('c9','Will the Celtics beat the Heat?','y9','n9',0,1,'t',?)", (NOW,))
     feed.execute("INSERT INTO mk_pm_quotes(token_id,bid,ask,source,fetched_at) VALUES('y9',0.55,0.58,'clob:book',?)", (NOW,))
-    e = SP.edges(feed, NOW + 10)
-    assert len(e) == 1 and e[0]['gap_pp'] == pytest.approx((g['fair_home'] - 0.58) * 100, abs=0.01) and SP.edges(feed, NOW + 5000) == []
+    assert SP.edges(feed, NOW + 10) == []  # an undated question is not an event match
 
 
 def test_http_refuses_unsafe_urls():

@@ -17,9 +17,14 @@ KEYWORDS = {
 SOURCE_ROOM = {'coindesk': 'crypto', 'cointelegraph': 'crypto', 'theblock': 'crypto', 'espn_top': 'sports', 'bbc_sport': 'sports', 'gn_sports': 'sports', 'wsj_markets': 'stocks',
                'bloomberg_markets': 'stocks', 'cnbc_finance': 'stocks', 'nvidia_ir': 'stocks', 'sec_press': 'stocks', 'fed_press': 'perps', 'ecb_press': 'perps', 'cnbc_economy': 'perps',
                'whitehouse': 'polymarket', 'cnbc_politics': 'polymarket', 'politico': 'polymarket', 'thehill': 'polymarket', 'bloomberg_politics': 'polymarket'}
-MEME_STRONG = re.compile(r"\b(viral|meme|memes|memed|internet|tiktok|trending|hippo|cat|cats|dog|dogs|frog|pig|monkey|ape|duck|penguin|goat|llama|squirrel|raccoon|capybara|mascot|renam\w+|breaks? the internet)\b", re.I)
-MEME_WEAK = re.compile(r"\b(elon|musk|trump|escap\w+|scandal|outage|robot|billionaire|chaos|apolog\w+)\b", re.I)    # a strong marker, or two of these, makes a story a meme candidate
-STOPCAPS = frozenset('Viral Breaking Just Watch Video Photos The A An In On At For And Or But As Is Are Was By Of To With From After Before Over Under New Says Said Report Reports Why How What When Who Live Watch This That It US UK EU UN'.split())
+MEME_NAMED = re.compile(r'\b(?:viral\s+)?memes?\s+(?:called|named)\s+["“]([^"”]{2,40})["”]', re.I)
+MEME_ANIMAL = re.compile(
+    r"\b(hippo|cat|dog|frog|pig|monkey|ape|duck|penguin|goat|llama|squirrel|raccoon|capybara) "
+    r"(escapes?|steals?|interrupts?)\b", re.I)
+MEME_GENERIC = frozenset(
+    'viral trending internet news meme memes breaking video podcast latest updates world sports markets '
+    'bbc cnn cnbc reuters associated press guardian bloomberg time forbes tech business entertainment '
+    'the a an of daily top live new york times washington post financial al jazeera fox sky nbc abc ap npr espn '.split())
 WORD = re.compile(r"[a-z0-9][a-z0-9.\-']*")
 STOP = frozenset('a an the of to in on at for and or is are was were be been will would by with from as that this it its after before over under than then not no yes who what when which about into up down new says say said'.split())
 MIN_ROUTE = 30.0
@@ -51,18 +56,21 @@ def places(text):
     return list({v[0]: v for k, v in PLACES.items() if re.search(r'\b' + re.escape(k) + r'\b', low)}.values())[:6]
 
 
-def meme_proposal(title):
-    """A name and ticker a story could be memed as, or None. Crude: the longest capitalised phrase that is not a sentence opener, else the first animal or marker word."""
-    strong, weak = MEME_STRONG.findall(title), set(w.lower() for w in MEME_WEAK.findall(title))
-    marks = strong + sorted(weak)
-    if not strong and len(weak) < 2:
-        return None
-    phrases = [p for p in re.findall(r"\b(?:[A-Z][a-zA-Z'\-]+)(?:\s+[A-Z][a-zA-Z'\-]+){0,2}\b", title) if p.split()[0] not in STOPCAPS]
-    name = re.sub(r"'s$", '', max(phrases, key=len)) if phrases else marks[0].title()
-    letters = re.sub(r'[^A-Za-z]', '', name).upper()
-    words = name.split()
-    ticker = (letters if len(letters) <= 8 else ''.join(w[0] for w in words).upper() if len(words) >= 3 else letters[:8])[:8]
-    return dict(name=name[:40], ticker=ticker or None, markers=sorted({m.lower() for m in marks})[:4])
+def meme_proposal(title, source=None):
+    """Recognize a named meme or a concrete animal incident. Never infer a ticker."""
+    named = MEME_NAMED.search(title)
+    animal = MEME_ANIMAL.search(title)
+    if named:
+        name = named[1].strip()
+        words = set(re.findall(r"[^\W\d_]+", name.casefold()))
+        source_words = re.findall(r"[^\W\d_]+", (source or '').casefold())
+        if not words - MEME_GENERIC - set(source_words):
+            return None
+        return dict(name=name, ticker=None, score=60.0, markers=['named meme'], why='The headline names a specific meme.')
+    if animal:
+        return dict(name=animal[0].title(), ticker=None, score=45.0, markers=['animal incident'],
+                    why='The headline describes a specific animal incident.')
+    return None
 
 
 def overlap(title, market_rows):
@@ -101,9 +109,9 @@ def classify(item, market_rows=(), hook=None):
     if matched:
         got = rooms.get('polymarket', dict(score=0.0, reason=''))
         rooms['polymarket'] = dict(score=min(100.0, got['score'] + 50.0 + 10 * len(matched)), reason=(got['reason'] + '; ' if got['reason'] else '') + '%d open market(s) share its words' % len(matched))
-    meme = meme_proposal(item.get('title') or '')
+    meme = meme_proposal(item.get('title') or '', item.get('source'))
     if meme:
-        rooms['memes'] = dict(score=min(100.0, 30.0 + 15.0 * len(meme['markers'])), reason='meme markers: ' + ', '.join(meme['markers']))
+        rooms['memes'] = dict(score=meme['score'], reason=meme['why'])
     rooms = {r: v for r, v in rooms.items() if v['score'] >= MIN_ROUTE}
     out = dict(rooms=rooms or {'other': dict(score=10.0, reason='no rule matched')}, meme=meme if 'memes' in rooms else None, markets=matched, places=places(text), hook_error=None)
     if hook:

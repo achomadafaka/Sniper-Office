@@ -100,9 +100,9 @@ def test_a_closed_order_wakes_its_owner_once_with_plan_prices_result_and_reason(
     other = FakeSeat(tmp_path, role='judge_gpt', ledger_db=ledger, ledger_epoch='office-v2-explore-gpt-1')
     other.office = sqlite3.connect(tmp_path / 'o.db', isolation_level=None)
     assert WK.source(other, False) is None             # not that book's owner
-    scout = FakeSeat(tmp_path, role='scout', ledger_db=ledger)
-    scout.office = sqlite3.connect(tmp_path / 'o.db', isolation_level=None)
-    assert WK.source(scout, False) is None             # only order roles
+    reader = FakeSeat(tmp_path, role='researcher', ledger_db=ledger)
+    reader.office = sqlite3.connect(tmp_path / 'o.db', isolation_level=None)
+    assert WK.source(reader, False) is None             # only order roles
 
 
 def open_order(spend=25., peak=25.):

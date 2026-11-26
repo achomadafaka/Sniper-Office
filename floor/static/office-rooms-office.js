@@ -25,13 +25,17 @@
   const seatsOf = (d, id) => (d.rooms?.[id] ?? []).filter(s => d.seats?.[s]);
   const floorOf = d => d.floor ?? {};
   const allBooks = d => (floorOf(d).book_list ?? []).filter(([key]) => key.startsWith('book:')).map(([key, label]) => [label, d[key]]);
-  const orderRows = d => (floorOf(d).orders ?? []);
+  // Paused seats (the Control room's list) drop out of the working tables. An order's id is its request's id; an order with no request in view is kept.
+  const paused = d => new Set(d.rooms?.control ?? []);
+  const roleOfActor = (d, actor) => d.seats ? Object.keys(d.seats).find(k => d.seats[k].actor_id === actor) ?? actor : actor;
+  const requester = d => Object.fromEntries((floorOf(d).paper_requests ?? []).map(r => [r.request_id, roleOfActor(d, r.actor_id)]));
+  const orderRows = d => { const off = paused(d), who = requester(d); return (floorOf(d).orders ?? []).filter(o => !off.has(who[o.order_id])); };
 
   // ---- the wall
   const thoughts = (title, id, material) => [title, material, d => seatsOf(d, id).filter(s => d.seats[s].last_thought).map(s => join(name(s), short(d.seats[s].last_thought, 90), age(d.seats[s].last_thought_at)))];
   const mail = (title, id, material) => [title, material, d => {
     const set = mine(d, id);
-    return (d.floor?.mail ?? []).filter(m => set.has(m.from) || set.has(m.to)).slice(0, 4).map(m => join((m.from === 'operator' ? 'operator' : name(m.from)) + ' to ' + (m.to === 'operator' ? 'operator' : name(m.to)), short(m.text, 80), age(m.at)));
+    return (d.floor?.mail ?? []).filter(m => set.has(m.from) || (m.to_all ?? [m.to]).some(t => set.has(t))).slice(0, 4).map(m => join((m.from === 'operator' ? 'operator' : name(m.from)) + ' to ' + (m.to_all ?? [m.to]).map(t => t === 'operator' ? 'operator' : name(t)).join(', '), short(mailParts(m.text).first, 80), age(m.at)));
   }];
   const requests = (title, id, material) => [title, material, d => {
     const set = mine(d, id), rows = (d.floor?.requests ?? []).filter(r => set.has(r.seat));
@@ -73,7 +77,7 @@
       const closed = orderRows(d).filter(o => o.state === 'closed' && finite(o.exit_usd) && finite(o.spend_usd));
       const net = closed.reduce((n, o) => n + o.exit_usd - o.spend_usd - (o.costs_usd ?? 0), 0);
       return closed.length ? {figure: figure(usd(net), 'net, ' + closed.length + ' closed orders', net), lines: [closed.filter(o => o.exit_usd - o.spend_usd - (o.costs_usd ?? 0) > 0).length + ' made money']} : [];
-    }], requests('Requests', 'decision', 'notebook')],
+    }], requests('Requests', 'decision', 'notebook'), mail('Head directions', 'decision', 'cabinet')],
     trading,
     control: [window.OfficeFloor.furniture.control[0], ['Wakes', 'screen', d => (d.floor?.wakes ?? []).slice(0, 4).map(w => join(name(w.role), w.outcome, w.model, age(w.at)))], window.OfficeFloor.furniture.control[1]],
   });
@@ -81,9 +85,22 @@
   // ---- inside
   const seatTable = (d, roles) => table('Seats', ['Seat', 'State', 'Doing', 'Model', 'Last event', 'Wakes today', 'Tokens today', 'Unread mail', 'Last tool'],
     roles.filter(r => d.seats?.[r]), r => { const s = d.seats[r]; return [name(r), s.office_status, s.last_action, s.model, stamp(s.last_at), s.wakes_today, s.tokens_today, s.unread_mail, s.last_tool]; });
+  const mailParts = (value, n = 200) => { const clean = String(value ?? '').replace(/\s+/g, ' ').trim(), cut = clean.search(/[.!?](\s|$)/), first = cut < 0 ? clean : clean.slice(0, cut + 1), rest = clean.slice(first.length).trim(); return {first, rest, preview: rest.length > n ? rest.slice(0, n - 1).trimEnd() + '…' : rest}; };
+  const who = role => role === 'operator' ? 'operator' : name(role);
+  const mailBody = value => {          // first sentence bold, the rest cut to ~200 chars; click opens the whole text. text() keeps the address Copy buttons.
+    const {first, rest, preview} = mailParts(value);
+    const lead = text('b', first);
+    if (rest === preview) return block(lead, rest ? text('span', ' ' + rest) : null);
+    const box = text('details'), summary = text('summary'), more = text('span', ' ' + preview);
+    summary.append(lead, more);
+    box.append(summary, text('p', rest));
+    box.addEventListener('toggle', () => { more.hidden = box.open; });
+    return box;
+  };
   const mailTable = (d, roles) => {
     const set = new Set(roles);
-    return table('Mail', ['When', 'From', 'To', 'Text'], (d.floor?.mail ?? []).filter(m => !roles || set.has(m.from) || set.has(m.to)), m => [stamp(m.at), m.from, m.to, short(m.text, 500)]);
+    return table('Mail', ['When', 'From', 'To', 'Text'], (d.floor?.mail ?? []).filter(m => !roles || set.has(m.from) || (m.to_all ?? [m.to]).some(t => set.has(t))),
+      m => [stamp(m.at), who(m.from), (m.to_all ?? [m.to]).map(who).join(', '), mailBody(m.text)]);
   };
   const requestTable = (d, roles) => {
     const set = new Set(roles);
@@ -127,13 +144,14 @@
     const f = d.floor?.filler;
     return section('Paper filler', f && (finite(f.last_mark_at) || finite(f.last_outcome_at)) ? block(line('Last mark', finite(f.last_mark_at) ? age(f.last_mark_at) : null), line('Last request outcome', finite(f.last_outcome_at) ? age(f.last_outcome_at) : null), line('Last fill attempt', finite(f.last_attempt_at) ? age(f.last_attempt_at) : null)) : line('The filler has recorded no mark or outcome in this ledger.'));
   };
-  const paperRequests = d => table('Requests to the filler', ['When', 'Kind', 'Seat', 'Coin', 'Chain', 'Reason'], d.floor?.paper_requests, r => [stamp(r.at), r.kind, d.seats ? Object.keys(d.seats).find(k => d.seats[k].actor_id === r.actor_id) ?? r.actor_id : r.actor_id, coin(r.network_id, r.mint), r.network_id, r.reason], r => r.request_id);
+  const paperRequests = d => table('Requests to the filler', ['When', 'Kind', 'Seat', 'Coin', 'Chain', 'Reason'], (d.floor?.paper_requests ?? []).filter(r => !paused(d).has(roleOfActor(d, r.actor_id))), r => [stamp(r.at), r.kind, roleOfActor(d, r.actor_id), coin(r.network_id, r.mint), r.network_id, r.reason], r => r.request_id);
   const outcomes = d => table('Request outcomes', ['When', 'Kind', 'Outcome', 'Reason'], d.floor?.outcomes, r => [stamp(r.at), r.kind, r.outcome, r.reason], r => r.request_id);
   const capital = d => table('Capital', ['Ledger', 'Book', 'When', 'Kind', 'Amount', 'Note'], d.floor?.capital, c => [c._source, c.book_id, stamp(c.at), c.kind, dollars(c.usd), c.note]);
   const halts = d => table('Halts', ['When', 'Action', 'By', 'Reason'], d.floor?.halts, h => [stamp(h.at), h.action, h.actor_id, h.reason], h => 'halt-' + h.seq);
   const feedTickets = d => table('Feed tickets', ['When', 'Verdict', 'Coin', 'Chain', 'Stage', 'Why', 'Seat'], d.floor?.tickets, t => [stamp(Date.parse(t.ts) / 1000), t.verdict, coin(t.network_id, t.mint), t.network_id, t.stage, t.reason, t.seat], t => t.ticket_id);
   const candidates = d => table('Candidate coins', ['Known', 'Coin', 'Chain', 'Pool', 'Seat'], d.floor?.candidates, c => [stamp(c.corrected_known_at ?? c.known_at), coin(c.network_id, c.mint), c.network_id, c.pool, c.actor_id]);
-  const filters = d => table('Feed filters', ['When', 'Seat', 'Reason', 'Rules'], d.floor?.filters, f => [stamp(f.at), f.actor_id, f.reason, f.rules_json], f => 'filter-' + f.seq);
+  const filters = d => table('Feed filters', ['When', 'Seat', 'Reason', 'Rules'], (d.floor?.filters ?? []).filter(f => !paused(d).has(roleOfActor(d, f.actor_id))), f => [stamp(f.at), name(roleOfActor(d, f.actor_id)), f.reason, ruleCount(f.rules_json)], f => 'filter-' + f.seq);
+  const ruleCount = raw => { try { const v = JSON.parse(raw); const n = Array.isArray(v) ? v.length : v && typeof v === 'object' ? Object.keys(v).length : null; return n == null ? null : n + (n === 1 ? ' rule' : ' rules'); } catch { return null; } };
   const reads = d => table('Results reads', ['Seat', 'First read', 'Last read', 'Items', 'Reads'], d.floor?.reads, r => [r.actor_id, stamp(r.first_at), stamp(r.last_at), r.items_n, r.reads]);
   const wakeTable = (d, roles) => {
     const set = roles && new Set(roles);
@@ -160,7 +178,7 @@
       const added = build(d, d.rooms?.[id] ?? []).filter(node => node?.textContent.trim());
       const first = original?.tagName === 'DIV' ? [...original.children] : [];
       box.append(...(id === 'trading' ? [...first, ...added] : [...added, ...first]));
-      return box.children.length ? box : original;
+      return box.children.length || !original ? box : original;   // a base detail may return null (nothing to show); the desk needs a node
     }});
   }
 })();

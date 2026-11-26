@@ -11,7 +11,7 @@ Type=simple
 Environment=PYTHONUNBUFFERED=1
 Environment=PYTHONPATH=/srv/sniper-office/release
 WorkingDirectory=/srv/sniper-office/release
-ExecStart=/home/bigpapi/.pyenv/versions/3.13.0/bin/python3 -m sniper_office.crew_bridge --config %h/.config/crewlink/sniper-office.json
+ExecStart=/usr/bin/python3 -m sniper_office.crew_bridge --config %h/.config/crewlink/sniper-office.json
 Restart=on-failure
 RestartSec=10
 Nice=10

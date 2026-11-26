@@ -256,6 +256,8 @@ def place(led, feed, book_id, lane, args, now, pol, actor=None, role=None):
                 raise Refused('review_pending', unreviewed=owed, next='call lesson_add for each pos_id: pos_id, cause (what went wrong), change (what you will do differently); then order again')
             return dict(state='filled', pos_id=OPEN[lane](led, feed, b, now, args, pol), book_id=book_id)
     except Refused as r:
+        with C.txn(led):  # the order txn rolled back; the refusal is kept so a silent lane can be diagnosed
+            event(led, book_id, None, now, 'refused', {'strategy': args.get('strategy'), **r.more, 'reason': r.reason, 'role': role})
         return dict(state='refused', reason=r.reason, **r.more)
 
 

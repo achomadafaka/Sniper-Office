@@ -9,5 +9,7 @@
   "resume_after_s": 900,
   "interval_s": 1,
   "office_cgroup": null,
+  "pids_cgroup": null,
+  "pids_max_frac": 0.8,
   "kill_file": null
 }

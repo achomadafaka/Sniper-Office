@@ -24,7 +24,7 @@ class Tool:
 class Host:
     def __init__(self,cfg):
         self.cfg=cfg;self.tools={};self.wake_sources=[];self.deny_host_sources=[];self.label_sources=[];self.busy_checks=[];self.retention_rules=[];self.panels={};self.handover_hooks=[];self.boot_sources=[];self.tick_hooks=[]
-        self.notifier=None;self.pager=None
+        self.notifier=None;self.pager=None;self.operator_note_source=None
 
     def add_tool(self,name,description,properties,required,handler,*,group=None,call_refs=None,result_refs=None):
         """A name that matches a built-in tool replaces it for this seat."""

@@ -43,7 +43,18 @@ def test_a_read_with_no_match_is_known_and_empty_not_an_outage(tmp_path, monkeyp
 
 def test_a_dead_brain_is_still_unavailable(tmp_path, monkeypatch):
     t, _ = tools(tmp_path, monkeypatch, ask=(4, ''))
-    assert call(t, 'brain_read', query='q')[1]['reason'] == 'brain_unavailable'
+    doc = call(t, 'brain_read', query='q')[1]
+    assert doc['reason'] == 'brain_unavailable' and doc['rc'] == 4          # says how it died, so the next outage is traceable
+
+
+def test_a_brain_that_times_out_says_so(tmp_path, monkeypatch):
+    t, _ = tools(tmp_path, monkeypatch)
+    import subprocess
+    def slow(*a, **k):
+        raise subprocess.TimeoutExpired('brain', 30)
+    monkeypatch.setattr(BR.subprocess, 'run', slow)
+    doc = call(t, 'brain_read', query='q')[1]
+    assert doc['reason'] == 'brain_unavailable' and doc['error'] == 'TimeoutExpired'
 
 
 def test_read_filters_by_kind_client_side(tmp_path, monkeypatch):

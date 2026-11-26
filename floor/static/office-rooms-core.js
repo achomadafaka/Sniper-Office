@@ -347,12 +347,16 @@
         algorithm ? el('p', algorithm.title) : null);
     },
     detail(data) {
-      return block(livePositions(data.live_book, 'News calls'), livePositions(data.live_book, 'Forced traders'), seatPickLab(data.seat_pick_lab), newsCallLab(data.news_call_lab, data.live_book), algorithmLab(data.algorithm_lab), muskLab(data.musk_lab));
+      return block(data.live_book && livePositions(data.live_book, 'News calls'),
+        data.live_book && livePositions(data.live_book, 'Forced traders'),
+        data.seat_pick_lab && seatPickLab(data.seat_pick_lab),
+        data.news_call_lab && newsCallLab(data.news_call_lab, data.live_book),
+        data.algorithm_lab && algorithmLab(data.algorithm_lab), data.musk_lab && muskLab(data.musk_lab));
     },
   });
 
   OfficeRooms.register({
-    id: 'decision', title: 'Decision', order: 10, seats: ['head', 'head_gpt'],
+    id: 'decision', title: 'Decision', order: 10, seats: [],
     figures(data) {
       const resolved = data.scorecard?.totals?.markets?.resolved?.sum_pp;
       return [figure('Resolved points', pp(resolved), resolved), figure('Open calls', data.open_call_count)];
@@ -363,6 +367,7 @@
         compact(first(openCalls(data), 2), c => openRows(c).slice(0, 4).filter(v => !missing(v)).join(' · ')));
     },
     detail(data) {
+      if (!data.live_book && !data.open_calls && !data.board) return null;
       return block(
         livePositions(data.live_book, 'Main book'),
         section('Open calls', rows(openHeaders, openCalls(data), openRows, c => c.call_id),
@@ -392,140 +397,16 @@
     },
   });
 
-  const verdict = row => ['works', 'even', 'does not work'].includes(row.verdict) ? row.verdict : 'too few to judge';
-  function strategyCounts(data) {
-    const records = data.strategies?.strategies;
-    if (!Array.isArray(records)) return null;
-    return Object.fromEntries(['works', 'even', 'does not work', 'too few to judge']
-      .map(label => [label, records.filter(row => verdict(row) === label).length]));
-  }
-  const units = (book, result) => book === 'perps' || book === 'stocks' ? pct(result) : pp(result);
-  function strategyLab(data) {
-    const lab = data.strategy_lab;
-    if (!lab) return null;
-    const net = (row, value) => row.unit === '%' ? pct(value) : pp(value);
-    const group = (book, lane) => lab.rows.filter(row => row.book === book && row.lane === lane);
-    const groups = ['Prediction', 'Stocks', 'Perps', 'Sports', 'Memes', 'Unclassified'].flatMap(book =>
-      ['main', 'experiment', 'study', 'watch'].map(lane => ({book, lane, items: group(book, lane)}))
-      .filter(({items}) => items.length));
-    const tail = data.btc_tail_study;
-    return block(
-      el('p', 'Paper results after costs. Main, experiment, study and watch results are kept separate.'),
-      tail ? section('BTC touch tail study',
-        el('p', `${tail.scored} scored of ${tail.total} flags · First observation per market. Scores use the exact outcome after expiry.`),
-        rows(['Strike', 'Flagged', 'Vol above near spot', 'Result', 'Market Brier', 'ATM Brier'], tail.records,
-          r => [dollars(r.strike), clock(r.at), pp(r.atm_gap_vol_pp), r.outcome,
-            num(r.market_brier, 3), num(r.atm_brier, 3)])) : null,
-      lab.seats?.length ? section('Experiment allowance · today (UTC)',
-        ...lab.seats.map(seat => {
-          const label = {head: 'Head Claude', head_gpt: 'Head GPT', trader: 'Trader', perps: 'Perps'}[seat.seat];
-          const pass = seat.last_no_trade;
-          return block(el('h4', label), el('p', `${seat.book} · ${text(seat.used)} of ${seat.limit} used`),
-            pass ? el('p', `Last no-trade pass · ${clock(pass.at)} · ${text(pass.reason)}`) : el('p', 'Last no-trade pass unavailable.'),
-            pass?.closest_setup ? el('p', `Closest setup · ${pass.closest_setup}`) : null,
-            pass?.would_trade_if ? el('p', `Would trade if · ${pass.would_trade_if}`) : null);
-        })) : null,
-      !lab.registry_available ? el('p', 'Strategy registry unavailable.') : null,
-      !lab.trade_snapshot_available ? el('p', 'Experiment trade receipts unavailable.') : null,
-      ...groups.map(({book, lane, items}) => section(
-        `${book} · ${{main: 'Main book', experiment: 'Experiments', study: 'Study', watch: 'Watch notes'}[lane]}`,
-        ...items.map(row => {
-          const details = el('details');
-          const title = el('summary', 'View records and rules');
-          const metrics = el('p', `Owner ${text(row.owner)} · Status ${text(row.status)} · Trades ${text(row.trades)} · Scored ${text(row.scored)} · Win rate ${pct(Number.isFinite(row.win_rate) ? 100 * row.win_rate : null)} · Net ${net(row, row.net)} · Last trade ${clock(row.last_trade_at)}`);
-          for (const [label, value] of [['Hypothesis', row.hypothesis], ['Entry', row.entry], ['Exit', row.exit], ['Kill criterion', row.kill], ['Historical verdict', row.verdict]]) {
-            if (!missing(value)) details.append(el('p', `${label} · ${value}`));
-          }
-          if (Number.isFinite(row.clv)) details.append(el('p', `Mean closing line value ${pp(row.clv)}`));
-          if (row.records.length) details.append(rows(['Instrument', 'Side', 'Entered', 'Net after costs', 'Status'],
-            row.records, trade => [trade.instrument, trade.side, clock(trade.at), net(row, trade.net), trade.status]));
-          else if (Array.isArray(row.notes)) details.append(rows(['Story', 'Recorded'], row.notes, note => [note.story, clock(note.at)]));
-          else details.append(el('p', row.trades === 0 ? 'No trades recorded.' : 'Trade details unavailable.'));
-          details.prepend(title);
-          return block(el('h4', row.name), metrics, details);
-        }))),
-    );
-  }
-
   OfficeRooms.register({
     id: 'strategies', title: 'Strategy Lab', order: 12, seats: [],
-    figures(data) {
-      const counts = strategyCounts(data);
-      return [figure('Work', counts?.works), figure('Do not work', counts?.['does not work'])];
-    },
-    summary(data) {
-      const counts = strategyCounts(data);
-      const ranked = data.strategies?.strategies?.filter(row => Number.isFinite(row.settled_sum)) ?? [];
-      const scope = (book, label, dir) => {
-        const rows = ranked.filter(row => row.book === book).sort((a, b) => dir * (a.settled_sum - b.settled_sum));
-        return rows.length ? `${label} · ${rows[0].name} (${units(book, rows[0].settled_sum)} settled net, n=${rows[0].settled_n})` : unknown;
-      };
-      return block(el('p', counts ? `${counts.even} even · ${counts['too few to judge']} too few to judge` : unknown),
-        el('p', ['prediction', 'stocks', 'perps'].map(book => scope(book, `Best ${book}`, -1)).filter(line => line !== unknown).join(' · ') || unknown),
-        el('p', ['prediction', 'stocks', 'perps'].map(book => scope(book, `Worst ${book}`, 1)).filter(line => line !== unknown).join(' · ') || unknown));
-    },
-    detail(data) {
-      const book = data.strategies;
-      if (!book) return el('p', 'The strategy ledger could not be read.');
-      const labels = {thesis: 'Theory', markets: 'Markets', entry: 'Entry', exit: 'Exit', evidence: 'Evidence', fails_when: 'Fails when', seats: 'Seats'};
-      const strategies = book.strategies ?? [];
-      const cards = new Map();
-      const comparison = rows(['Strategy', 'Book', 'Verdict', 'Wins of settled', 'Settled net', 'Mean', 'Open', 'Open marks'],
-        strategies, strategy => {
-          const jump = el('button', strategy.name);
-          jump.type = 'button';
-          jump.addEventListener('click', () => {
-            const card = cards.get(strategy.id);
-            card.focus({preventScroll: true});
-            card.scrollIntoView({block: 'start'});
-          });
-          return [jump, strategy.book, strategy.verdict, `${text(strategy.wins)} of ${text(strategy.settled_n)}`,
-            units(strategy.book, strategy.settled_sum), units(strategy.book, strategy.settled_mean),
-            strategy.open_n, units(strategy.book, strategy.open_mark_sum)];
-        });
-      return block(strategyLab(data), section('Totals by book', el('p', text(book.read_me)),
-        rows(['Book', 'Settled', 'Wins', 'Settled net', 'Unsettled'],
-          Object.entries(book.totals_by_book ?? {}).filter(([, stats]) => stats.settled_n || stats.open_n),
-          ([name, totals]) => [name, totals.settled_n, totals.wins,
-            totals.settled_n ? units(name, totals.settled_sum) : unknown, totals.open_n])),
-        section('Compare strategies', comparison),
-        ...strategies.map(strategy => {
-          const description = el('dl');
-          for (const [key, label] of Object.entries(labels)) {
-            const value = Array.isArray(strategy[key]) ? strategy[key].filter(item => !missing(item)).join(', ') : strategy[key];
-            if (!missing(value)) description.append(el('dt', label), el('dd', value));
-          }
-          const study = strategy.id === 'pm-nothing-ever-happens' && strategy.study;
-          const studyRows = study && Object.entries(study).flatMap(([arm, totals]) => [
-            [arm, 'All', totals],
-            ...Object.entries(totals.categories ?? {}).map(([label, scores]) => [arm, label, scores]),
-            ...Object.entries(totals.no_price_buckets ?? {}).map(([label, scores]) => [arm, 'NO price ' + label, scores]),
-          ]);
-          const card = section(strategy.name,
-            el('p', `${verdict(strategy)}` + (Number.isFinite(strategy.settled_n) ? ` · ${strategy.settled_n} settled` : '')
-              + (strategy.settled_n ? ` · ${strategy.wins} wins · ${units(strategy.book, strategy.settled_sum)} net` : '')),
-            el('p', Number.isFinite(strategy.open_n) ? `${strategy.open_n} unsettled`
-              + (Number.isFinite(strategy.open_mark_sum) ? ` · ${units(strategy.book, strategy.open_mark_sum)} provisional marks` : '') : null), description,
-            studyRows ? rows(['Arm', 'Group', 'Entered', 'Resolved', 'Win rate', 'Mean NO price', 'Break-even with fees',
-              'Net points', 'Worst single loss', 'Loss if every open entry loses'], studyRows,
-              ([arm, group, r]) => [arm, group, r.entries, r.settled,
-                pct(r.win_rate == null ? null : 100 * r.win_rate), pct(r.mean_no_price == null ? null : 100 * r.mean_no_price),
-                pct(r.break_even == null ? null : 100 * r.break_even), pp(r.net_pp), pp(r.worst_entry_pp), pp(r.all_open_lose_pp)]) : null,
-            rows(['Record', 'Side', 'When', 'Settled', 'Provisional mark', 'Assignment', 'Autopsy verdict'], strategy.records,
-              row => [row.what, row.side, clock(row.at), units(strategy.book, row.settled), units(strategy.book, row.mark), row.strategy_reason ? [row.assigned, row.strategy_reason].filter(v => !missing(v)).join(' · ') : row.assigned, row.verdict],
-              row => row.call_id));
-          card.className = 'od-strategy';
-          card.tabIndex = -1;
-          cards.set(strategy.id, card);
-          return card;
-        }));
-    },
+    summary() { return null; },
+    detail() { return null; }, // rendered from the markets ledger by office-live.js
   });
 
   const probability = reply => Number.isFinite(reply?.probability_yes) ? `${Math.round(100 * reply.probability_yes)}%` : unknown;
   const duration = ms => Number.isFinite(ms) ? `${(ms / 1000).toFixed(1)} s` : unknown;
   OfficeRooms.register({
-    id: 'debate', title: 'Debate', order: 20, seats: ['bull', 'bear', 'narrative', 'hermes', 'quant'],
+    id: 'debate', title: 'Debate', order: 20, seats: [],
     figures(data) {
       return [figure('Debates in the last hour', data.stats?.debates_1h),
         figure('Latest debate time', duration(data.cases?.[0]?.total_ms))];
@@ -538,7 +419,7 @@
           .map(([seat, reply]) => `${seat} ${probability(reply)}`).join(' · ')));
     },
     detail(data) {
-      if (!data.cases?.length) return el('p', 'The desk has not saved a debate transcript.');
+      if (!Array.isArray(data.cases) || !data.cases.length) return null;
       const narrative = data.narrative_hour;
       const measured = narrative && section('Narrative one-hour score · last 24 h',
         el('p', `${narrative.scored} of ${narrative.classified} briefs scored · ${narrative.recorded} with a starting quote`),

@@ -154,7 +154,7 @@ def test_paper_order_checks_then_records_a_queued_request_and_never_claims_a_fil
     assert call(t, 'paper_order', ticket_id='a', reason='why')[1]['reason'] == 'plan_required'
     assert call(t, 'paper_order', ticket_id='a', sl_pct=99, **plan)[1]['reason'] == 'rail_out_of_bounds:sl_pct'
     assert call(t, 'paper_order', ticket_id='zzz', **plan)[1]['reason'] == 'ticket_unknown'
-    assert call(seat(tmp_path, monkeypatch, role='scout', cfg=cfg), 'paper_order', ticket_id='a', **plan)[1]['reason'] == 'role_cannot_order'
+    assert call(seat(tmp_path, monkeypatch, role='researcher', cfg=cfg), 'paper_order', ticket_id='a', **plan)[1]['reason'] == 'role_cannot_order'
     error, doc = call(t, 'paper_order', ticket_id='a', sl_pct=20, **plan)
     assert not error and doc['state'] == 'queued' and doc['filled'] is False and doc['order_id'] is None
     assert call(t, 'paper_order', ticket_id='a', **plan)[1]['state'] == 'duplicate'
@@ -243,3 +243,14 @@ def test_brain_uses_the_office_brain_with_the_seat_role(tmp_path, monkeypatch):
     assert call(t, 'brain_note', text=' ')[1]['reason'] == 'text_invalid'
     assert call(t, 'brain_note', text='--role head')[1]['reason'] == 'text_invalid'
 
+
+
+def test_scout_trades_the_coin_desk_in_the_slim_office():
+    from sniper_office.desk import paper as D
+    assert 'scout' in D.ORDER_ROLES and 'scout' in D.RESULTS_ROLES and 'scout' in D.BOOK_ROLES and 'scout' not in D.TPSL_ROLES
+
+
+def test_order_tool_descriptions_name_every_order_seat():
+    from sniper_office.desk import TOOLS
+    text = {t[1]: t[2] for t in TOOLS}
+    assert all('Scout' in text[n] and 'Judges only' not in text[n] for n in ('paper_order', 'paper_exit', 'order_review', 'book_view'))

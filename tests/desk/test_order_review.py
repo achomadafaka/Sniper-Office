@@ -48,6 +48,6 @@ def test_order_review_refuses_open_orders_other_books_and_other_roles(tmp_path, 
     t, cfg = env(tmp_path, monkeypatch, [LOSS, open_order, foreign])
     assert j(P.order_review(t, 'op', 'c', 'd'))['reason'] == 'order_not_closed'
     assert j(P.order_review(t, 'fo', 'c', 'd'))['reason'] == 'order_not_in_this_book'
-    assert j(P.order_review(seat(tmp_path, monkeypatch, role='scout', cfg=cfg), 'lose', 'c', 'd'))['reason'] == 'role_cannot_review'
+    assert j(P.order_review(seat(tmp_path, monkeypatch, role='researcher', cfg=cfg), 'lose', 'c', 'd'))['reason'] == 'role_cannot_review'
     assert not sqlite3.connect(tmp_path / 'l.db').execute('SELECT 1 FROM order_reviews').fetchall()
-    assert j(P.paper_order(seat(tmp_path, monkeypatch, role='scout', cfg=cfg), 'a', **PLAN))['reason'] == 'role_cannot_order'     # role check still first
+    assert j(P.paper_order(seat(tmp_path, monkeypatch, role='researcher', cfg=cfg), 'a', **PLAN))['reason'] == 'role_cannot_order'     # role check still first

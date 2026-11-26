@@ -18,9 +18,9 @@ from . import market as M, ticks as TK
 MAX_SHEET = 48000
 RESULTS_MAX = 60
 FEED_MAX = 50
-ORDER_ROLES = ('judge', 'judge_gpt', 'copy_desk')
+ORDER_ROLES = ('judge', 'judge_gpt', 'copy_desk', 'scout')   # scout trades the coin desk since the slim office (2026-11-26)
 TPSL_ROLES = ('copy_desk',)   # these seats must state both a stop and a take-profit on every order
-RESULTS_ROLES = ('head', 'scout') + ORDER_ROLES
+RESULTS_ROLES = ('head',) + ORDER_ROLES
 BOOK_ROLES = ('head',) + ORDER_ROLES
 SEAT_RAILS = ('sl_pct', 'tp_pct', 'trail_pct')
 FEED_FACTS = dict(top10_pct=('holders', 'top10_pct'), creator_pct=('holders', 'creator_pct'), cluster_status=('cluster', 'status'), cluster_reason=('cluster', 'reason'),
@@ -496,6 +496,10 @@ def paper_order(tools, ticket_id, reason, thesis=None, disproof=None, exit_plan=
     try:
         with closing(ro(path)) as conn:
             ticket = conn.execute("SELECT network_id,mint,pool FROM desk_tickets WHERE ticket_id=? AND stage='hard_filter' AND verdict='PASS' ORDER BY id DESC LIMIT 1", (ticket_id,)).fetchone()
+        j7 = path_of(tools, 'j7_db')   # a seat with both dbs (scout) also orders J7 copy tickets
+        if ticket is None and j7 is not None and j7 != path:
+            with closing(ro(j7)) as conn:
+                ticket = conn.execute("SELECT network_id,mint,pool FROM desk_tickets WHERE ticket_id=? AND stage='hard_filter' AND verdict='PASS' ORDER BY id DESC LIMIT 1", (ticket_id,)).fetchone()
     except (OSError, sqlite3.Error):
         return unknown('desk_unreadable')
     if ticket is None:

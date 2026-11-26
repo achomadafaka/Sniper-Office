@@ -1,6 +1,17 @@
 {
   "markets_db": "/srv/office/run/data/markets.db",
   "ledger_db": "/srv/office/run/data/markets_ledger.db",
-  "interval_s": 60, "top_n": 40, "min_volume24h": 2000, "max_spread": 0.06, "min_days_to_end": 0.125,
-  "pm_fee_rate": 0.05, "gap_s": 0.35, "retention_days": 7
+  "interval_s": 60,
+  "top_n": 40,
+  "min_volume24h": 2000,
+  "max_spread": 0.06,
+  "min_days_to_end": 0.125,
+  "pm_fee_rate": 0.05,
+  "gap_s": 0.35,
+  "retention_days": 7,
+  "event_tags": [
+    "nfl",
+    "soccer"
+  ],
+  "sports_top_n": 60
 }

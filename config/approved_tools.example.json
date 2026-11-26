@@ -1,0 +1,9 @@
+{
+  "plugins": ["sniper_office.approved_tools"],
+  "approved_tools": {
+    "coach": ["debate_index"],
+    "narrative": ["narrative_guess_coverage"],
+    "pm_trader": ["pm_rules"],
+    "judge_gpt": ["pm_rules"]
+  }
+}

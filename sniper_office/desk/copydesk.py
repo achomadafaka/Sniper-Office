@@ -1,7 +1,7 @@
 """The J7 copy lane's seat side: read the stored pro-trader signals (written by desk/j7.py), the coin's 1 s ticks (desk/ticks.py) and the book's live PnL, and the wake on a new signal.
 
 Tool group `copy`. Orders and exits are the plain `paper_order` / `paper_exit` (group `paper`); the `copy_desk` role must give sl_pct and tp_pct on every order. Config keys (per seat):
-`desk_db` (the J7 db: j7_signals, desk_tickets, ticks), `ticks_db` (default: desk_db), `ledger_db`, `ledger_epoch`, `signal_wakes` (true to be woken), `signal_wake_lookback_s` (default 900).
+`desk_db` (the J7 db: j7_signals, desk_tickets, ticks), `j7_db` (the J7 db when desk_db is the scanner db, as for scout), `ticks_db` (default: desk_db), `ledger_db`, `ledger_epoch`, `signal_wakes` (true to be woken), `signal_wake_lookback_s` (default 900).
 Trader text (thesis posts) is untrusted data and is never put in a wake prompt."""
 from contextlib import closing
 import json
@@ -22,8 +22,16 @@ def _row(cols, r, now):
     return dict(d, age_s=round(now - d['recv_at']), relay_lag_s=None if d['trade_at'] is None else round(d['recv_at'] - d['trade_at'], 2), outcome=out)
 
 
+SIGNAL_WAKE_ROLES = ('copy_desk', 'scout')   # scout took over the copy lane in the slim office (2026-11-26)
+
+
+def j7_path(tools):
+    """The J7 db: `j7_db` when the seat's own desk_db is the scanner db (scout), else desk_db (copy_desk)."""
+    return P.path_of(tools, 'j7_db') or P.path_of(tools, 'desk_db')
+
+
 def _db(tools):
-    path = P.path_of(tools, 'desk_db')
+    path = j7_path(tools)
     return (path, None) if path else (None, P.unknown('desk_config_unknown'))
 
 
@@ -147,7 +155,7 @@ def position_live(tools):
     if bad:
         return bad
     ledger = P.path_of(tools, 'ledger_db')
-    ticks = tools.cfg.get('ticks_db') or tools.cfg.get('desk_db')
+    ticks = tools.cfg.get('ticks_db') or tools.cfg.get('j7_db') or tools.cfg.get('desk_db')
     if ledger is None or not ticks:
         return P.unknown('ledger_config_unknown' if ledger is None else 'ticks_config_unknown')
     now = P._now(tools)
@@ -165,9 +173,9 @@ def position_live(tools):
 
 def signal_wake(seat, urgent):
     """Urgent wake when a ticketed signal arrived that this seat has not been woken for. One wake covers every new signal (marked together); only ids and numbers go in the prompt."""
-    if not urgent or seat.cfg.get('role') != 'copy_desk' or seat.cfg.get('signal_wakes') is not True:
+    if not urgent or seat.cfg.get('role') not in SIGNAL_WAKE_ROLES or seat.cfg.get('signal_wakes') is not True:
         return None
-    path = P.path_of(seat, 'desk_db')
+    path = j7_path(seat)
     now = P._now(seat)
     if path is None or now is None:
         return None

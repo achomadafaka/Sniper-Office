@@ -44,6 +44,12 @@ def read(name, directory=DIR):
 def system_prompt(cfg, directory=DIR):
     """The seat's prompt file text followed by its vetted skills, or just the prompt file when none are configured."""
     base = Path(cfg['prompt_file']).read_text()
+    if cfg.get('role') in {'coach', 'head', 'copy_desk', 'pm_trader', 'perps_trader', 'stocks_trader'} and cfg.get('markets_ledger_db'):
+        from .markets.api import latest_ledger_archive
+
+        _, archive = latest_ledger_archive(cfg['markets_ledger_db'])
+        if archive is not None and archive.is_file():
+            base += f'\n\nLedger boundary: pre-reset records are preserved in run/data/archive/{archive.parent.name}/ as archived reference. Keep them separate from current book results.\n'
     names = cfg.get('skills') or []
     if not isinstance(names, list) or not all(isinstance(n, str) for n in names) or len(set(names)) != len(names):
         raise ValueError('skills_config')

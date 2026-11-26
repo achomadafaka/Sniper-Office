@@ -331,6 +331,15 @@ def test_a_new_signal_wakes_the_copy_seat_urgently_once_and_never_carries_the_tr
     assert CD.signal_wake(other, True) is None
 
 
+def test_scout_with_a_separate_j7_db_is_woken_by_signals(tmp_path):
+    lis = listener(tmp_path, now=NOW - 5)
+    lis.handle(0, 'fomo_event', trade(ts=NOW - 7))
+    s = FakeSeat(tmp_path, role='scout', desk_db=str(tmp_path / 'desk.db'), j7_db=str(tmp_path / 'j7.db'), signal_wakes=True)
+    wake = CD.signal_wake(s, True)
+    assert wake is not None and wake['type'] == 'j7_signal'
+    assert CD.signal_wake(FakeSeat(tmp_path / 'x', role='scout', desk_db=str(tmp_path / 'j7.db'), signal_wakes=False) if (tmp_path / 'x').mkdir() is None else None, True) is None
+
+
 def desk_seat(tmp_path, monkeypatch, role='copy_desk', **cfg):
     dbp = str(tmp_path / 'j7.db')
     r = Rig(tmp_path)
@@ -351,6 +360,17 @@ def test_paper_order_for_the_copy_seat_needs_both_sl_and_tp_and_is_a_queued_mark
     judge = desk_seat(tmp_path, monkeypatch, role='judge')
     assert call(judge, 'paper_order', ticket_id=tid, **plan)[1]['reason'] != 'tp_sl_required'   # other seats keep optional rails
 
+
+def test_scout_orders_a_j7_ticket_from_its_separate_j7_db(tmp_path, monkeypatch):
+    lis = listener(tmp_path, now=NOW)
+    lis.handle(0, 'fomo_event', trade())
+    tid = lis.db.execute('SELECT ticket_id FROM j7_signals').fetchone()[0]
+    scanner = sqlite3.connect(tmp_path / 'desk.db')
+    scanner.execute("ATTACH ? AS j", (str(tmp_path / 'j7.db'),)); scanner.execute('CREATE TABLE desk_tickets AS SELECT * FROM j.desk_tickets WHERE 0'); scanner.commit(); scanner.close()
+    t = desk_seat(tmp_path, monkeypatch, role='scout')
+    t.cfg.update(desk_db=str(tmp_path / 'desk.db'), j7_db=str(tmp_path / 'j7.db'))
+    error, doc = call(t, 'paper_order', ticket_id=tid, reason='why', thesis='t', disproof='d', exit_plan='e', sl_pct=10, tp_pct=40)
+    assert not error and doc['state'] == 'queued', doc
 
 def test_signal_tools_show_trader_history_with_hit_rate_ticks_and_the_real_resolution(tmp_path, monkeypatch):
     lis = listener(tmp_path, now=NOW - 5000)
@@ -376,7 +396,7 @@ def test_signal_tools_show_trader_history_with_hit_rate_ticks_and_the_real_resol
     assert chart['state'] == 'known' and len(chart['samples']) <= 12 and chart['resolution']['poll_gap_median_s'] == pytest.approx(.3, abs=.01)
     assert call(t, 'chart_read', chain='base', token='0xnone')[1]['reason'] == 'no_ticks_in_window'
     assert call(t, 'signal_read', ticket_id='nope')[1] == dict(state='refused', reason='signal_unknown')
-    assert call(seat(tmp_path, monkeypatch, role='scout', cfg=dict(desk_db=str(tmp_path / 'j7.db'))), 'signal_list')[1]['reason'] == 'role_cannot_read_signals'
+    assert call(seat(tmp_path, monkeypatch, role='researcher', cfg=dict(desk_db=str(tmp_path / 'j7.db'))), 'signal_list')[1]['reason'] == 'role_cannot_read_signals'
 
 
 def test_position_live_and_book_view_show_unrealized_pnl(tmp_path, monkeypatch):

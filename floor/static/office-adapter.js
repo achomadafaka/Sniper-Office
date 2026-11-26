@@ -33,10 +33,13 @@
     return item;
   }
 
+  // a room-level {state:'unknown',reason} inside a known envelope is not room data: keep it out of mk and say why in mkUnknown
+  const splitRooms = m => { const mk = {}, mkUnknown = {}; if (m?.state !== 'known') return {mk: null, mkUnknown: null}; for (const [k, v] of Object.entries(m.rooms ?? {})) { if (v?.state === 'unknown') mkUnknown[k] = v.reason ?? 'unknown'; else mk[k] = v; } return {mk, mkUnknown}; };
+
   async function adapt(raw) {
     const now = Date.now() / 1000;
     const [markets, services] = await Promise.all([getJson('/api/office/markets'), getJson('/api/office/services')]);
-    const mk = markets?.state === 'known' ? markets.rooms : null;
+    const {mk, mkUnknown} = splitRooms(markets);
     await window.OfficeNames?.ensure(((raw.sources?.orders?.rows) ?? []).map(o => [o.network_id, o.mint]).concat(((raw.sources?.tickets?.rows) ?? []).map(t => [t.network_id, t.mint])));
     const seatMap = raw.seats ?? null;
     const roleOf = Object.fromEntries(Object.entries(seatMap ?? {}).map(([role, s]) => [s.actor_id, role]));
@@ -110,7 +113,7 @@
     const wire = floor.tickets?.map(t => ({news_id: t.ticket_id, title: [t.verdict, t.mint ? window.OfficeNames.text(t.network_id, t.mint) : null, t.reason].filter(Boolean).join(' · '),
       source: t.seat ?? 'feed', received_at: Date.parse(t.ts) / 1000, disposition: t.verdict}));
     return {
-      ...raw, floor, wire, activity, ...out, seats, mk, svc: services, live: window.OfficeLive?.state() ?? null,
+      ...raw, floor, wire, activity, ...out, seats, mk, mkUnknown, ledgerBoundary: markets?.ledger_boundary ?? null, svc: services, live: window.OfficeLive?.state() ?? null,
       desk: {state, epoch: raw.office?.epoch, heartbeat_at: heartbeat, halt_reason: halt?.action === 'halt' ? halt.reason : null, seat_wall: null},
       open_call_count: totals ? totals.open : null,
       stats: {...raw.stats, wakes_1h: raw.sources?.wakes?.state === 'known' ? wakes.filter(w => fin(w.at) && w.at > now - 3600).length : null},
@@ -123,7 +126,7 @@
       } : undefined,
       ideas: {proposal_counts: raw.requests ? {open: requests.length} : undefined, proposals_open: raw.requests ? requests.length : null, proposal_history: raw.requests ? requests : undefined, briefs: [], leads: []},
       calendar: [],
-      situation: mk?.situation && window.OfficeLive ? window.OfficeLive.situation(mk.situation) : {stories: [], as_of: raw.as_of},
+      situation: window.OfficeLive ? window.OfficeLive.situation(mk?.situation, new Set(Object.keys(mk?.newsroom?.debates ?? {}))) : null,   // the mapper says unknown on missing data
       memes: {paper: {items: [], counts: {}, state: 'chart_only'}},
     };
   }

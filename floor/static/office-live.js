@@ -103,16 +103,21 @@
     for (const extra of [...feed.querySelectorAll('.od-feed-item')].slice(60)) extra.remove();
   }
 
+  const hasSeat = (d, role) => Array.isArray(d.desk_now?.seats)
+    ? d.desk_now.seats.some(seat => seat.role === role) : Boolean(d.seats?.[role]);
+  const traderRole = {polymarket: 'pm_trader', perps: 'perps_trader', stocks: 'stocks_trader'};
+  const staffedLane = (d, lane) => hasSeat(d, traderRole[lane]);
+  const staffedBooks = d => (d.mk?.paper_labs?.books ?? []).filter(book => staffedLane(d, book.lane));
+
   // ---- totals across the books (the header strip and the Books table)
   function bookRows(d) {
     const rows = [];
-    const copy = (S.books ?? [])[0];
-    for (const b of S.books ?? []) rows.push({key: 'book:' + b.book_id, book: b.book_id, lane: 'memecoins (J7 copy)', seat: 'copy_desk', equity: b.equity_usd, realized: b.realized_usd, unrealized: b.unrealized_usd, open: b.open_n, unpriced: b.unpriced_n, live: true});
-    for (const [, book] of (d.floor?.book_list ?? []).filter(([k]) => k.startsWith('book:')).map(([k, label]) => [k, label])) {
+    for (const b of hasSeat(d, 'copy_desk') ? S.books ?? [] : []) rows.push({key: 'book:' + b.book_id, book: b.book_id, lane: 'memecoins (J7 copy)', seat: 'copy_desk', equity: b.equity_usd, realized: b.realized_usd, unrealized: b.unrealized_usd, open: b.open_n, unpriced: b.unpriced_n, live: true});
+    for (const [, book] of (hasSeat(d, 'judge') || hasSeat(d, 'judge_gpt') ? d.floor?.book_list ?? [] : []).filter(([key]) => key.startsWith('book:'))) {
       const sum = d['book:' + book]?.summary;
       if (sum && !rows.some(r => r.book === book)) rows.push({key: 'ledger:' + book, book, lane: 'memecoins (judges)', realized: sum.net_usd, unrealized: null, open: sum.open, closed: sum.scored, wins: sum.wins, judge: true});
     }
-    for (const b of d.mk?.paper_labs?.books ?? []) rows.push({key: 'mk:' + b.book_id, book: b.book_id, lane: b.lane, equity: b.equity, cash: b.cash, realized: b.realized_total, unrealized: b.unrealized_total, open: (b.open ?? []).length, closed: b.closed_n, wins: b.wins, halted: b.halted, start: b.start_cash});
+    for (const b of staffedBooks(d)) rows.push({key: 'mk:' + b.book_id, book: b.book_id, lane: b.lane, equity: b.equity, cash: b.cash, realized: b.realized_total, unrealized: b.unrealized_total, open: (b.open ?? []).length, closed: b.closed_n, wins: b.wins, halted: b.halted, start: b.start_cash});
     return rows;
   }
   function totals(d) {
@@ -133,7 +138,7 @@
   const roomLabel = {debate: 'Debate', memes: 'Memes', sports: 'Sports', trading: 'Trading', newsroom: 'Newsroom'};
   function routed(d) {
     const wire = d.mk?.newsroom?.wire;
-    return wire == null ? null : wire.filter(w => w.routes?.length && (w.age_s ?? 0) < 86400).length;
+    return Array.isArray(wire) ? wire.filter(w => w.routes?.length && (w.age_s ?? 0) < 86400).length : null;
   }
   function header(d) {
     S.d = d;
@@ -233,7 +238,6 @@
   const EXTERNAL = {polymarket: 'Polymarket unreachable from this host (external block)'};
   const feedState = f => f.ok ? 'ok' : EXTERNAL[f.feed] && /timed out|URLError|unreachable|refused|unreachable/i.test(f.detail ?? '') ? 'external' : 'down';
   const feedLabel = f => feedState(f) === 'external' ? EXTERNAL[f.feed] : null;
-  const reasonOf = d => d.mk ? null : 'the markets database is not readable (is --markets-db set, and the feeds running?)';
   function T(title, rows, cols, empty, id, why) {
     if (rows == null) return section(title, el('p', 'Unknown: ' + (why ?? 'this source could not be read.')));
     if (!rows.length) return section(title, el('p', empty ?? 'Nothing recorded yet.'));
@@ -242,13 +246,21 @@
   const cell = v => v == null || v === '' ? null : v;
   const when = at => fin(at) ? time(at) : null;
   const json = v => { try { return typeof v === 'string' ? JSON.parse(v) : v; } catch { return null; } };
-  const flat = v => v == null ? null : typeof v === 'object' ? short(JSON.stringify(v), 160) : v;
+  const flat = v => Array.isArray(v) ? v.filter(item => typeof item === 'string').join(', ')
+    : typeof v === 'number' || typeof v === 'string' ? v : null;
+  function eventDetail(row) {
+    const detail = json(row.detail_json);
+    if (typeof detail?.reason === 'string') return short(human(detail.reason), 140);
+    if (row.kind === 'strategy_retired') return 'Automatic retirement after ' + (detail?.n ?? 'an unknown number of') + ' closes';
+    return typeof detail?.instrument === 'string' ? detail.instrument : null;
+  }
 
   // ---- rooms
-  const noMarkets = d => section('Markets', el('p', 'Unknown: ' + reasonOf(d)));
+  const noMarkets = (d, key) => section('Markets', el('p', 'Unknown: ' + (d.mkUnknown?.[key] ?? d.mk?.[key]?.reason
+    ?? (d.mk ? 'this room source could not be read.' : 'the markets database is not readable.'))));
   function newsroom(d) {
     const n = d.mk?.newsroom;
-    if (!n) return [noMarkets(d)];
+    if (n?.state === 'unknown' || !Array.isArray(n?.wire)) return [noMarkets(d, 'newsroom')];
     const titleOf = id => n.wire.find(w => w.news_id === id)?.title ?? id;
     const debated = Object.entries(n.debates ?? {});
     return [
@@ -257,43 +269,82 @@
       section('Debates', ...(debated.length ? debated.map(([id, turns]) => { const box = block(el('h4', short(titleOf(id), 120))); for (const t of turns) box.append(line(nameOf(t.role), t.stance, short(t.text, 400), ageText(t.at))); return box; }) : [el('p', 'No story debates recorded yet.')])),
       T('News calls (forced picks with a control arm)', n.news_calls, CALL_COLS, 'No news calls yet.'),
       T('Calls on stories (open positions naming a story)', n.calls, [['Market', r => r.label ?? r.instrument], ['Side', r => r.side], ['Entry', r => px(r.entry_price)], ['Live', r => r.live?.state === 'unknown' ? 'unpriced' : money(r.live?.value)], ['Unrealized', r => colored(usd(r.live?.unrealized), r.live?.unrealized)], ['Lane', r => r.lane]], 'No open position names a story.'),
+      Array.isArray(n.sources) ? T('News sources', n.sources, [['Source', r => r.source], ['Newest story', r => ageOf(r.age_s)], ['Stories, 24 h', r => r.n_24h]], 'No source has a story.') : null,
       T('Feeds', n.feeds, [['Feed', r => r.feed], ['Age', r => ageOf(r.age_s)], ['OK', r => feedState(r) === 'ok' ? 'yes' : feedState(r) === 'external' ? 'external block' : 'NO'], ['Detail', r => feedLabel(r) ?? short(r.detail, 100)]], 'No feed has reported.'),
     ];
   }
   function debate(d) {
     const n = d.mk?.newsroom;
-    if (!n) return [];
+    if (n?.state === 'unknown' || !Array.isArray(n?.wire)) return [noMarkets(d, 'newsroom')];
     const debated = Object.entries(n.debates ?? {});
     return [section('Story debates (newsdesk, trader, critic)', ...(debated.length ? debated.slice(0, 12).map(([id, turns]) => { const box = block(el('h4', short(n.wire.find(w => w.news_id === id)?.title ?? id, 120))); for (const t of turns) box.append(line(nameOf(t.role), t.stance, short(t.text, 400), ageText(t.at))); return box; }) : [el('p', 'No story debates recorded yet.')]))];
   }
   function sports(d) {
     const s = d.mk?.sports;
-    if (!s) return [noMarkets(d)];
+    if (!s) return [noMarkets(d, 'sports')];
+    const prob = value => fin(value) ? (100 * value).toFixed(1) + '%' : null;
+    const points = value => fin(value) ? value.toFixed(1) + ' pp' : null;
+    const empty = s.edges_status?.state === 'unknown'
+      ? 'Bookmaker lines are unavailable (' + human(s.edges_status.reason) + ').'
+      : 'No fresh pregame matches with eligible Polymarket quotes.';
+    const comparisons = (s.edges ?? []).filter(r => r.kind === 'model_comparison');
+    const pairs = (s.edges ?? []).filter(r => r.kind === 'book_arb');
     return [
-      T('Games', s.games, [['Start', r => when(r.start_ts)], ['League', r => r.league], ['Away', r => r.away], ['Home', r => r.home], ['State', r => r.state], ['Score', r => fin(r.home_score) ? r.away_score + ' - ' + r.home_score : null], ['Fair home (de-vigged)', r => fin(r.fair_home) ? (100 * r.fair_home).toFixed(1) + '%' : null], ['Bookmaker', r => r.odds_provider]], 'No games fetched in the last hour.'),
-      T('Edges (fair line against the market ask)', s.edges, [['Game', r => r.game ?? r.game_id ?? flat(r.teams)], ['Side', r => r.side ?? r.team], ['Fair', r => fin(r.fair) ? (100 * r.fair).toFixed(1) + '%' : flat(r.fair)], ['Ask', r => fin(r.ask) ? cents(r.ask) : flat(r.ask)], ['Gap', r => fin(r.gap_pp) ? colored(r.gap_pp.toFixed(1) + ' pp', r.gap_pp) : null], ['Market', r => short(r.question ?? r.market, 80)]], 'No game has an open market naming both teams.'),
+      T('Games', s.games, [['Start', r => when(r.start_ts)], ['League', r => r.league], ['Away', r => r.away], ['Home', r => r.home],
+        ['State', r => r.state], ['Score', r => fin(r.home_score) && fin(r.away_score) ? r.away_score + ' - ' + r.home_score : null],
+        ['Home implied (first book, with vig)', r => prob(r.home_imp)], ['Away implied (first book, with vig)', r => prob(r.away_imp)],
+        ['Fair home', r => prob(r.fair_home)], ['Fair draw', r => prob(r.fair_draw)], ['Fair away', r => prob(r.fair_away)],
+        ['Bookmaker', r => r.odds_provider]], 'No games fetched in the last hour.'),
+      T('Pregame bookmaker comparison', comparisons, [['Market', r => short(r.question, 105)], ['Team', r => r.team], ['Token side', r => r.side],
+        ['Fair', r => prob(r.fair)], ['Ask', r => cents(r.ask)], ['Spread', r => points(100 * r.spread)], ['Entry fee', r => cents(r.fee)],
+        ['Hold gap after entry fee', r => colored(points(r.gap_pp), r.gap_pp)], ['Fair minus ask', r => points(r.gross_gap_pp)],
+        ['3× round-trip cost hurdle', r => points(r.cost_hurdle_pp)], ['Quote age', r => ageOf(r.quote_age_s)],
+        ['Line polled', r => ageOf(r.line_age_s)], ['Line unchanged', r => ageOf(r.line_unchanged_s)], ['PM midpoint move', r => points(r.pm_move_pp) ?? 'Unknown'], ['Bookmakers', r => r.provider],
+        ['Screen', r => [r.qualifies ? 'Pass' : r.bookmaker_n < r.min_bookmakers ? 'Too few bookmakers' : 'Below screen', ...r.low_trust_reasons.map(human)].join(' · ')]], empty),
+      pairs.length ? T('Paired Polymarket quotes', pairs, [['Market', r => short(r.question, 105)], ['Both asks + fees', r => cents(r.ask)],
+        ['Payout gap', r => points(r.gap_pp)], ['Top size', r => r.ask_size], ['Oldest quote', r => ageOf(r.quote_age_s)]]) : null,
       T('Feed', s.feeds, [['Feed', r => r.feed], ['Age', r => ageOf(r.age_s)], ['OK', r => feedState(r) === 'ok' ? 'yes' : feedState(r) === 'external' ? 'external block' : 'NO'], ['Detail', r => feedLabel(r) ?? short(r.detail, 100)]]),
-    ];
+    ].filter(Boolean);
   }
+  const strategyKey = r => r.book + ':' + r.strategy_id;
   function strategies(d) {
     const s = d.mk?.strategies;
-    if (!s) return [noMarkets(d)];
-    const lanes = Object.entries(s.totals_by_lane ?? {});
+    if (s?.state === 'unknown' || !Array.isArray(s?.strategies)) return [noMarkets(d, 'strategies')];
+    const lanes = s.totals_by_lane ? Object.entries(s.totals_by_lane) : null;
     return [
-      T('Strategies', s.strategies, [['Name', r => r.name ?? r.strategy_id], ['Book', r => r.book], ['Status', r => r.status], ['Settled', r => r.settled_n], ['Wins', r => r.wins], ['Mean %', r => pct(r.settled_mean_pct, 2)], ['Open', r => r.open_n], ['Verdict', r => r.verdict], ['Thesis', r => short(r.thesis, 140)], ['Fails when', r => short(r.fails_when, 100)]], 'No strategy registered yet.', r => r.strategy_id),
-      T('By lane', lanes, [['Lane', ([k]) => k], ['Settled', ([, v]) => v?.settled_n], ['Wins', ([, v]) => v?.wins], ['Open', ([, v]) => v?.open_n], ['Sum %', ([, v]) => pct(v?.settled_sum_pct, 2)], ['Other', ([, v]) => flat(Object.fromEntries(Object.entries(v ?? {}).filter(([k]) => !['settled_n', 'wins', 'open_n', 'settled_sum_pct'].includes(k))))]], 'No lane totals yet.'),
+      T('Strategies', s.strategies, [['Name', r => r.name ?? r.strategy_id], ['Lane', r => r.book],
+        ['Owner', r => r.owner ? nameOf(r.owner) : null],
+        ['Status', r => r.status === 'testing' && r.settled_n === 0 && r.open_n === 0 ? 'Registered, no entries' : r.status ?? (r.name ? 'Catalog' : null)],
+        ['Settled', r => r.settled_n], ['Wins', r => r.wins], ['Mean net return (% of margin)', r => pct(r.settled_mean_pct, 2)],
+        ['Open', r => r.open_n], ['Verdict', r => r.verdict], ['Thesis', r => r.thesis], ['Entry rule', r => r.entry],
+        ['Exit rule', r => r.exit], ['Fails when', r => r.fails_when], ['Automatic retirement', r => {
+          const conditions = [];
+          if (fin(r.kill_mean_lt)) conditions.push('mean realized USD/trade < ' + r.kill_mean_lt);
+          if (fin(r.kill_winrate_lt)) conditions.push('win rate < ' + pct(100 * r.kill_winrate_lt));
+          return conditions.length ? 'After ' + r.min_n + ' closes: ' + conditions.join(' or ') : 'None configured';
+        }]], 'No strategies in this ledger.', strategyKey),
+      T('By lane', lanes, [['Lane', ([k]) => k], ['Settled', ([, v]) => v.settled_n], ['Wins', ([, v]) => v.wins],
+        ['Open', ([, v]) => v.open_n], ['Sum of net returns (% of margin)', ([, v]) => v.settled_n ? pct(v.settled_sum_pct, 2) : '—']], 'No lane totals yet.'),
     ];
   }
   const bookTable = (title, books) => T(title, books, [['Book', r => r.book_id], ['Lane', r => r.lane], ['Cash', r => money(r.cash)], ['Equity', r => r.equity == null ? 'unknown (position unpriced)' : money(r.equity)], ['Realized', r => colored(usd(r.realized_total), r.realized_total)], ['Unrealized', r => r.unrealized_total == null ? 'unknown' : colored(usd(r.unrealized_total), r.unrealized_total)],
     ['Open', r => (r.open ?? []).length], ['Closed', r => r.closed_n], ['Wins', r => r.wins], ['Halted', r => r.halted ? 'YES' : 'no']], 'No book exists yet.');
   function paperLabs(d) {
     const p = d.mk?.paper_labs;
-    if (!p) return [noMarkets(d)];
+    const registry = d.mk?.strategies;
+    const registered = registry?.state !== 'unknown' && Array.isArray(registry?.strategies)
+      ? registry.strategies.filter(r => r.owner) : null;
+    const experiments = T('Registered experiments', registered, [['Name', r => r.name ?? r.strategy_id], ['Lane', r => r.book],
+      ['Owner', r => nameOf(r.owner)], ['Status', r => r.status], ['Entry rule', r => r.entry]], 'No experiments registered.', strategyKey, d.mkUnknown?.strategies ?? registry?.reason);
+    if (!p || p.state === 'unknown') return [noMarkets(d, 'paper_labs'), experiments];
     return [
       T('News-call lab', p.news_calls, CALL_COLS, 'No news call has been made yet.'),
       bookTable('Books (live)', p.books),
-      T('Strategy totals by lane', Object.entries(p.strategies ?? {}), [['Lane', ([k]) => k], ['Totals', ([, v]) => flat(v)]], 'No strategy results yet.'),
-      section('Not ported', el('p', p.not_ported)),
+      T('Strategy totals by lane', Object.entries(p.strategies ?? {}), [['Lane', ([k]) => k], ['Settled', ([, v]) => v?.settled_n], ['Wins', ([, v]) => v?.wins], ['Win rate', ([, v]) => v?.settled_n ? Math.round(100 * v.wins / v.settled_n) + '%' : '—'], ['Sum %', ([, v]) => v?.settled_n ? pct(v.settled_sum_pct, 2) : '—'], ['Open', ([, v]) => v?.open_n]], 'No strategy results yet.'),
+      T('Post-count trackers', p.rule_markets?.trackers, [['Market window', r => r.title], ['Account', r => r.handle],
+        ['Count so far', r => r.total], ['Pace at close', r => r.pace], ['Closes', r => when(r.end_ts)]], 'No active tracker windows.'),
+      experiments,
+      p.not_ported ? section('Not ported', el('p', p.not_ported)) : null,
     ];
   }
   const walletRows = d => d.sources?.wallet_findings?.state === 'known' ? d.sources.wallet_findings.rows : null;
@@ -301,7 +352,7 @@
     const e = d.mk?.explorer, c = d.svc?.creator;
     const launches = c?.state === 'known' ? c.launches : null;
     return [
-      e ? T('Briefs', e.notes, [['When', r => when(r.at)], ['Seat', r => nameOf(r.role)], ['Topic', r => r.topic], ['Why this', r => short(r.why_this, 160)], ['Notebook', r => short(r.notebook, 400)]], 'No explorer brief yet.', r => 'note-' + r.id) : noMarkets(d),
+      e ? T('Briefs', e.notes, [['When', r => when(r.at)], ['Seat', r => nameOf(r.role)], ['Topic', r => r.topic], ['Why this', r => short(r.why_this, 160)], ['Notebook', r => short(r.notebook, 400)]], 'No explorer brief yet.', r => 'note-' + r.id) : noMarkets(d, 'explorer'),
       e ? T('Leads (scored at resolution)', e.leads, [['Question', r => short(r.question, 120)], ['Side', r => r.side], ['Price at note', r => cents(r.price_at)], ['Bid now', r => cents(r.bid_now)], ['Resolved', r => fin(r.resolved_pp) ? r.resolved_pp.toFixed(1) + ' pp' : null]], 'No lead recorded yet.') : null,
       T('Wallet findings', walletRows(d), [['When', r => when(r.created_at)], ['Wallet', r => r.wallet], ['Finding', r => human(r.finding_type)], ['Severity', r => r.severity], ['Message', r => short(r.message, 240)]], 'No wallet finding recorded.', null, 'no wallet analyzer database (start office-ui with --wallet-db).'),
       T('Creator launches (BSC collector)', launches, [['Token', r => N.node('bsc', r.token)], ['Transaction', r => short(r.tx_hash, 20)]], c?.status ? 'The collector has seen no launch yet (' + c.status + ').' : 'No launch seen.', null, c?.reason ?? 'no creator checkpoint'),
@@ -309,25 +360,32 @@
   }
   const rowsOf = (d, name) => d.sources?.[name]?.state === 'known' ? d.sources[name].rows : null;
   const xhandle = a => a ? '@' + String(a).replace(/^@/, '').slice(0, 30) : null;
+  function memeWhy(row) {
+    if (!row.why_full || row.why_full === row.why) return row.why;
+    const details = el('details');
+    details.append(el('summary', row.why), el('p', row.why_full));
+    return details;
+  }
   function memes(d) {
     const m = d.mk?.memes;
     const guesses = rowsOf(d, 'narrative_guesses');
     return [
-      m ? T('Meme candidates (from routed stories)', m, [['When', r => ageOf(r.age_s)], ['Name', r => r.name], ['Ticker', r => r.ticker ? '$' + r.ticker : null], ['Score', r => r.score], ['Story', r => short(r.title, 140)], ['Why', r => short(r.why, 100)], ['Proposed by', r => r.proposed_by]], 'No story has been proposed as a meme.', r => r.news_id) : noMarkets(d),
-      T('Narrative guesses', guesses, [['Known', r => when(r.known_at)], ['Cohort', r => r.cohort], ['Source', r => r.source], ['Theme', r => r.theme_id], ['Confidence', r => r.confidence], ['Tickers', r => (json(r.ticker_candidates_json) ?? []).slice(0, 5).join(', ')], ['Names', r => (json(r.name_candidates_json) ?? []).slice(0, 4).join(', ')], ['Rationale', r => short(r.rationale, 200)]], 'No narrative guess recorded.', null, 'no narrative database (start office-ui with --narrative-db).'),
-      T('Launch matches', rowsOf(d, 'narrative_matches'), [['Matched', r => when(r.matched_at)], ['Coin', r => N.node(r.network_id, r.mint, r.symbol)], ['Kind', r => r.match_kind], ['Source', r => r.source], ['Guess', r => short(r.guess_id, 14)]], 'No launch has been matched against a guess.', null, 'no narrative database.'),
+      m ? T('Top 5 meme candidates', m, [['When', r => ageOf(r.age_s)], ['Name', r => r.name], ['Ticker', r => r.ticker ? '$' + r.ticker : null], ['Score', r => r.score], ['Story', r => short(r.title, 140)], ['Why', memeWhy], ['Basis', r => r.proposed_by?.startsWith('seat:') ? 'Seat reviewed' : 'Headline rule']], 'No story has been proposed as a meme.', r => r.news_id) : noMarkets(d, 'memes'),
+      hasSeat(d, 'narrative') ? T('Narrative guesses', guesses, [['Known', r => when(r.known_at)], ['Cohort', r => r.cohort], ['Source', r => r.source], ['Theme', r => r.theme_id], ['Confidence', r => r.confidence], ['Tickers', r => (json(r.ticker_candidates_json) ?? []).slice(0, 5).join(', ')], ['Names', r => (json(r.name_candidates_json) ?? []).slice(0, 4).join(', ')], ['Rationale', r => short(r.rationale, 200)]], 'No narrative guess recorded.', null, 'no narrative database.') : null,
+      hasSeat(d, 'narrative') ? T('Launch matches', rowsOf(d, 'narrative_matches'), [['Matched', r => when(r.matched_at)], ['Coin', r => N.node(r.network_id, r.mint, r.symbol)], ['Kind', r => r.match_kind], ['Source', r => r.source], ['Guess', r => short(r.guess_id, 14)]], 'No launch has been matched against a guess.', null, 'no narrative database.') : null,
       T('X mentions', rowsOf(d, 'x_mentions'), [['Seen', r => when(r.seen_at)], ['Author', r => xhandle(r.author)], ['Coin', r => r.mint ? N.node(r.network_id, r.mint, r.ticker) : r.ticker ? '$' + r.ticker : null], ['How', r => r.method], ['Post', r => short(r.text, 260)]], 'No X mention recorded.', null, 'no X database (start office-ui with --x-db).'),
     ];
   }
   function coach(d) {
     const c = d.mk?.coach;
-    if (!c) return [noMarkets(d)];
+    if (!c) return [noMarkets(d, 'coach')];
     const names = [...new Set(c.skills.map(s => s.skill))];
     return [
       T('Lessons and loss reviews', c.lessons, [['When', r => when(r.at)], ['For', r => nameOf(r.role)], ['By', r => nameOf(r.by_role)], ['Position', r => r.pos_id], ['Cause', r => short(r.cause, 300)], ['Change', r => short(r.change, 300)], ['Lesson', r => short(r.lesson, 400)]], 'No lesson recorded yet.'),
       T('Coin desk loss reviews', rowsOf(d, 'order_reviews'), [['When', r => when(r.at)], ['By', r => nameOf(r.role)], ['Order', r => short(r.order_id, 12)], ['Cause', r => short(r.cause, 300)], ['Change', r => short(r.change, 300)]], 'No coin desk loss reviewed yet.'),
-      T('Strategies retired by their kill rule', c.retired ?? [], [['When', r => when(r.retired_at)], ['Lane', r => r.lane], ['Strategy', r => r.strategy_id], ['Stats', r => short(r.stats_json, 300)]], 'No strategy retired yet.'),
-      T('Halts and retirements', c.halts ?? [], [['When', r => when(r.at)], ['Book', r => r.book_id], ['Event', r => r.kind], ['Detail', r => short(r.detail_json, 300)]], 'No halt or retirement yet.'),
+      T('Strategies retired by their kill rule', c.retired ?? [], [['When', r => when(r.retired_at)], ['Lane', r => r.lane], ['Strategy', r => r.strategy_id], ['Closes', r => json(r.stats_json)?.n], ['Mean net per close (USD)', r => usd(json(r.stats_json)?.mean_realized)],
+        ['Win rate', r => { const rate = json(r.stats_json)?.winrate; return fin(rate) ? pct(100 * rate) : null; }]], 'No strategy retired yet.'),
+      T('Halts and retirements', c.halts ?? [], [['When', r => when(r.at)], ['Book', r => r.book_id], ['Event', r => r.kind], ['Detail', eventDetail]], 'No halt or retirement yet.'),
       T('Skills (every version, newest first)', c.skills, [['When', r => when(r.at)], ['Skill', r => r.skill], ['By', r => nameOf(r.by_role)], ['Steps', r => short(r.steps, 400)], ['Why', r => short(r.why, 200)]], 'No skill saved yet.', r => 'skill-' + r.id),
       T('Reviews', c.reviews, [['When', r => when(r.at)], ['By', r => nameOf(r.by_role)], ['Review', r => short(r.review, 500)], ['Priorities', r => short(r.priorities, 300)]], 'No coach review yet.'),
       section('Skills registered', el('p', names.length ? names.join(' · ') : 'none')),
@@ -335,20 +393,20 @@
   }
   function lab(d) {
     const l = d.mk?.lab;
-    if (!l) return [noMarkets(d)];
+    if (!l) return [noMarkets(d, 'lab')];
     return [T('Video rules under test', l.rules, [['Added', r => when(r.at)], ['Video', r => short(r.title, 80)], ['Rule', r => short(r.rule_text, 300)], ['Instrument', r => r.instrument], ['Status', r => r.status], ['Back-test', r => r.backtest_json ? flat(json(r.backtest_json)) : 'not run (the back-tester needs stored bars)']], 'No video rule recorded yet.', r => r.rule_id)];
   }
-  function situationRoom(d) { return []; }
 
-  // ---- Control: services, health, halts (token gated), operator chat to markets seats
+  // ---- Control: services, health, halts (token gated), operator notes
   let token = '', writable = null;
   getJson('/api/overview').then(o => { writable = o?.writable ?? null; });
   async function post(path, body) {
     try {
       const r = await fetch(path, {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json', 'X-Office-Token': token}, body: JSON.stringify(body)});
-      const out = await r.json().catch(() => ({}));
-      return r.ok ? 'done: ' + (out.state ?? 'ok') : 'refused (' + r.status + '): ' + (out.error ?? out.reason ?? 'unknown');
-    } catch { return 'delivery unknown'; }
+      const out = await r.json();
+      const label = r.ok ? 'done: ' + (out.state ?? 'ok') : 'refused (' + r.status + '): ' + (out.error ?? out.reason ?? 'unknown');
+      return {ok: r.ok, label, out};
+    } catch { return {ok: false, label: 'Request status unknown'}; }
   }
   function haltPanel(d) {
     const books = d.mk?.control?.books;
@@ -360,22 +418,36 @@
     input.type = 'password'; input.autocomplete = 'off'; input.placeholder = 'operator token'; input.setAttribute('aria-label', 'operator token'); input.value = token;
     input.addEventListener('input', () => { token = input.value; });
     box.append(input);
+    if (!books.length) box.append(el('p', 'No markets paper books in this ledger.'));
     for (const b of books) {
       const row = el('div', null, 'ol-halt');
       const state = el('span', (b.halted ? 'HALTED' : 'running') + ' · cash ' + (money(b.cash) ?? 'unknown'), b.halted ? 'ol-neg' : '');
       const go = el('button', b.halted ? 'Resume' : 'Halt');
       go.type = 'button';
       go.disabled = writable === false;
-      go.addEventListener('click', async () => { status.textContent = 'sending…'; status.textContent = await post('/api/markets/halt', {book_id: b.book_id, halted: !b.halted, reason: 'operator from the floor'}); });
+      go.addEventListener('click', async () => { status.textContent = 'sending…'; status.textContent = (await post('/api/markets/halt', {book_id: b.book_id, halted: !b.halted, reason: 'operator from the floor'})).label; });
       row.append(el('strong', b.book_id), ' ', state, ' ', go);
       box.append(row);
     }
     const say = el('form', null, 'ol-say');
-    const to = el('input'); to.placeholder = 'seat role (optional)'; to.setAttribute('aria-label', 'to role'); to.maxLength = 40;
-    const msg = el('input'); msg.placeholder = 'note for the markets chat'; msg.setAttribute('aria-label', 'message'); msg.maxLength = 500;
-    const send = el('button', 'Record note'); send.type = 'submit'; send.disabled = writable === false;
+    const to = el('input'); to.placeholder = 'seat role or all'; to.setAttribute('aria-label', 'recipient role or all seats'); to.maxLength = 40; to.required = true;
+    const msg = el('input'); msg.placeholder = 'operator note'; msg.setAttribute('aria-label', 'message'); msg.maxLength = 500;
+    const send = el('button', 'Queue note'); send.type = 'submit'; send.disabled = writable === false;
     say.append(to, msg, send);
-    say.addEventListener('submit', async e => { e.preventDefault(); if (!msg.value.trim()) return; status.textContent = await post('/api/markets/say', {to_role: to.value.trim(), text: msg.value}); msg.value = ''; });
+    say.addEventListener('submit', async e => {
+      e.preventDefault();
+      const role = to.value.trim(), text = msg.value;
+      if (!role || !text.trim() || send.disabled) return;
+      send.disabled = true;
+      status.textContent = 'Queueing note…';
+      const result = await post('/api/markets/say', {to_role: role, text});
+      send.disabled = writable === false;
+      if (result.ok && result.out.state === 'recorded') {
+        const count = result.out.recipient_n;
+        status.textContent = 'Queued for ' + count + (count === 1 ? ' seat' : ' seats');
+        if (msg.value === text) msg.value = '';
+      } else status.textContent = result.label;
+    });
     box.append(say, status);
     return section('Halt a book, operator note', box);
   }
@@ -402,12 +474,15 @@
     const c = d.mk?.control;
     return [
       serviceFacts(d), unitTable(d),
-      c ? T('Markets feeds health', c.feeds, [['Feed', r => r.feed], ['Age', r => ageOf(r.age_s)], ['OK', r => feedState(r) === 'external' ? el('span', 'external block') : colored(r.ok ? 'yes' : 'NO', r.ok ? 1 : -1)], ['Detail', r => feedLabel(r) ?? short(r.detail, 120)]], 'No feed has reported.') : noMarkets(d),
+      c ? T('Markets feeds health', c.feeds, [['Feed', r => r.feed], ['Age', r => ageOf(r.age_s)], ['OK', r => feedState(r) === 'external' ? el('span', 'external block') : colored(r.ok ? 'yes' : 'NO', r.ok ? 1 : -1)], ['Detail', r => feedLabel(r) ?? short(r.detail, 120)]], 'No feed has reported.') : noMarkets(d, 'control'),
       c ? T('Timed jobs (markets)', c.jobs, [['Job', r => r.name], ['Every', r => r.every_s + ' s']], 'No jobs.') : null,
       c ? section('Universe', line(Object.entries(c.universe ?? {}).map(([k, v]) => human(k) + ' ' + v).join(' · '))) : null,
       haltPanel(d),
-      c ? T('Book events', c.events, [['When', r => when(r.at)], ['Book', r => r.book_id], ['Kind', r => r.kind], ['Detail', r => short(r.detail_json, 160)]], 'No event yet.') : null,
-      c ? T('Markets operator chat (notes recorded on the floor)', c.operator_chat, [['When', r => when(r.at)], ['From', r => r.sender], ['To', r => r.to_role], ['Text', r => short(r.text, 300)]], 'No note recorded.') : null,
+      c ? T('Book events', c.events, [['When', r => when(r.at)], ['Book', r => r.book_id], ['Kind', r => r.kind], ['Detail', eventDetail]], 'No event yet.') : null,
+      c ? T('Operator notes', c.operator_chat, [['When', r => when(r.at)], ['From', r => r.sender],
+        ['To', r => r.to_role ?? 'All seats'], ['Text', r => short(r.text, 300)],
+        ['Delivery', r => r.delivery === 'delivered' ? 'Delivered (' + r.delivered_n + '/' + r.recipient_n + ')'
+          : r.delivery === 'pending' ? 'Pending (' + r.delivered_n + '/' + r.recipient_n + ' delivered)' : 'No receipt tracked']], 'No note recorded.') : null,
     ].filter(Boolean);
   }
 
@@ -468,9 +543,10 @@
     ['tp', r => px(r.tp_price)], ['sl', r => px(r.sl_price)], ['Liq', r => px(r.liq_price)], ['Lev', r => r.leverage > 1 ? r.leverage + 'x' : null], ['Opened', r => when(r.entry_at)], ['Thesis', r => short(r.thesis, 100)]];
   const closedCols = [['Closed', r => when(r.exit_at)], ['Market', r => r.label ?? r.instrument], ['Side', r => r.side], ['Entry', r => px(r.entry_price)], ['Exit (fill)', r => px(r.exit_price)], ['Realized', r => colored(usd(r.realized), r.realized)], ['Why', r => human(r.exit_reason)]];
   const laneSection = (d, lane, title) => {
-    const books = (d.mk?.paper_labs?.books ?? []).filter(b => b.lane === lane);
-    if (!d.mk) return noMarkets(d);
-    if (!books.length) return section(title, el('p', 'No ' + lane + ' book exists yet (the seat has not opened one).'));
+    const allBooks = d.mk?.paper_labs?.books;
+    if (!Array.isArray(allBooks)) return noMarkets(d, 'paper_labs');
+    const books = allBooks.filter(b => b.lane === lane);
+    if (!books.length) return section(title, el('p', 'No ' + lane + ' order filled in this ledger yet.'));
     return section(title, ...books.flatMap(b => [line(b.book_id, 'cash ' + (money(b.cash) ?? 'unknown'), 'equity ' + (b.equity == null ? 'unknown (position unpriced)' : money(b.equity)), 'realized ' + usd(b.realized_total), 'unrealized ' + (b.unrealized_total == null ? 'unknown' : usd(b.unrealized_total)), b.halted ? 'HALTED' : null),
       T('Open positions', b.open, posCols, 'No open position.'), T('Fills (closed, newest last)', b.closed_recent, closedCols, 'Nothing closed yet.')]));
   };
@@ -480,7 +556,43 @@
       ['Net', r => r.state === 'closed' && fin(r.exit_usd) ? colored(usd(r.exit_usd - r.spend_usd - (r.costs_usd ?? 0)), r.exit_usd - r.spend_usd - (r.costs_usd ?? 0)) : null], ['Why', r => human(r.exit_reason ?? r.reason)]], 'The copy desk has placed no order yet.', r => r.order_id);
   };
   function trading(d) {
-    return [booksSection(d), copyBook(d), j7Signals(d), section('Copy desk · orders', copyFills(d)), laneSection(d, 'polymarket', 'Polymarket'), laneSection(d, 'perps', 'Perps'), laneSection(d, 'stocks', 'Stocks')];
+    return [booksSection(d),
+      ...Object.keys(traderRole).filter(lane => staffedLane(d, lane))
+        .map(lane => laneSection(d, lane, {polymarket: 'Polymarket', perps: 'Perps', stocks: 'Stocks'}[lane])),
+      ...(hasSeat(d, 'copy_desk') ? [copyBook(d), j7Signals(d), section('Copy desk · orders', copyFills(d))] : [])];
+  }
+
+  function ledgerArchive(id, d) {
+    const boundary = d.ledgerBoundary;
+    if (!boundary || !['control', 'trading', 'coach', 'strategies', 'explorer', 'paper-labs'].includes(id)) return [];
+    const history = boundary.history;
+    const date = fin(boundary.started_at) ? new Date(boundary.started_at * 1000) : null;
+    const sameDay = date?.toDateString() === new Date().toDateString();
+    const timeOptions = {hour: 'numeric', minute: '2-digit'};
+    const stamp = date?.toLocaleString(undefined, sameDay ? timeOptions : {...timeOptions, month: 'short', day: 'numeric'});
+    const text = stamp ? 'Paper trading records restarted at ' + stamp + (sameDay ? ' today.' : '.')
+      : 'The paper trading reset time is unavailable.';
+    const hasHistory = history && ['trading', 'coach', 'explorer', 'paper-labs'].includes(id);
+    const note = hasHistory ? ' Earlier records are marked “Before reset”.'
+      : boundary.archive_path && !history ? ' Earlier records are unavailable.' : '';
+    const sections = [section('Paper trading reset', el('p', text + note))];
+    if (!history) return sections;
+    const archive = ' · Before reset';
+    if (id === 'trading') sections.push(T('Closed positions' + archive, history.closes?.filter(row => staffedLane(d, row.lane)),
+      [['Closed', r => when(r.exit_at)], ['Lane', r => r.lane], ['Instrument', r => r.label ?? r.instrument],
+        ['Net', r => usd(r.realized)]], 'No archived closes.', r => r.pos_id));
+    if (id === 'coach') sections.push(
+      T('Coach reviews' + archive, history.reviews, [['When', r => when(r.at)], ['By', r => nameOf(r.by_role)],
+        ['Review', r => short(r.review, 500)], ['Priorities', r => short(r.priorities, 300)]], 'No archived reviews.', r => r.id),
+      T('Skills' + archive, history.skills, [['When', r => when(r.at)], ['By', r => nameOf(r.by_role)],
+        ['Skill', r => short(r.skill, 80)], ['Steps', r => short(r.steps, 400)]], 'No archived skill versions.', r => r.id));
+    if (id === 'explorer') sections.push(T('Explorer briefs' + archive, history.explorer,
+      [['When', r => when(r.at)], ['By', r => nameOf(r.role)], ['Topic', r => r.topic],
+        ['Notebook', r => short(r.notebook, 500)]], 'No archived briefs.', r => r.id));
+    if (id === 'paper-labs') sections.push(T('Cashless news calls' + archive, history.calls,
+      [['When', r => when(r.at)], ['Market', r => r.question], ['Side', r => r.side],
+        ['Entry ask', r => cents(r.entry_ask)]], 'No archived calls.', r => r.call_id));
+    return sections;
   }
 
   // ---- wiring into the rooms: our sections come first, the room's own after them
@@ -495,7 +607,7 @@
         const original = base.detail(d);
         const rest = original?.tagName === 'DIV' ? [...original.children].filter(n => !(id === 'trading' && /^(Stocks|Perps)$/.test(n.querySelector?.('h3')?.textContent ?? ''))) : [];
         const box = block();
-        box.append(...mine, ...rest);
+        box.append(...ledgerArchive(id, d), ...mine, ...rest);
         return box;
       }});
     }
@@ -509,11 +621,15 @@
   Object.assign(F, {
     trading: d => [
       ['All books', 'screen', () => { const t = totals(d); return {figure: figure(t.total == null ? null : usd(t.total), 'PnL, realized and unrealized', t.total), lines: t.rows.slice(0, 4).map(r => [r.book, usd((r.realized ?? 0) + (r.unrealized ?? 0)), r.open != null ? r.open + ' open' : null].filter(Boolean).join(' · '))}; }],
-      ['Copy desk', 'screen', () => { const b = (S.books ?? [])[0]; return b ? {figure: figure(usd(b.total_usd), 'total, ' + b.open_n + ' open', b.total_usd), lines: [(S.signals ?? []).filter(s => s.side === 'buy').slice(0, 2).map(sigLine)].flat()} : []; }],
-      ['Markets books', 'paper', () => (d.mk?.paper_labs?.books ?? []).map(b => [b.lane, usd((b.realized_total ?? 0) + (b.unrealized_total ?? 0)), (b.open ?? []).length + ' open'].join(' · '))],
+      ...(hasSeat(d, 'copy_desk') ? [['Copy desk', 'screen', () => {
+        const b = S.books?.[0];
+        return b ? {figure: figure(usd(b.total_usd), 'total, ' + b.open_n + ' open', b.total_usd),
+          lines: (S.signals ?? []).filter(s => s.side === 'buy').slice(0, 2).map(sigLine)} : [];
+      }]] : []),
+      ['Markets books', 'paper', () => staffedBooks(d).map(b => [b.lane, usd((b.realized_total ?? 0) + (b.unrealized_total ?? 0)), (b.open ?? []).length + ' open'].join(' · '))],
     ],
     newsroom: [
-      ['Latest stories', 'paper', d => (d.mk?.newsroom?.wire ?? []).slice(0, 4).map(w => short(w.title, 52) + ' · ' + (ageOf(w.age_s) ?? ''))],
+      ['Latest stories', 'paper', d => (Array.isArray(d.mk?.newsroom?.wire) ? d.mk.newsroom.wire.slice(0, 4) : []).map(w => short(w.title, 52) + ' · ' + (ageOf(w.age_s) ?? ''))],
       ['Routed, 24 h', 'screen', d => { const c = d.mk?.newsroom?.room_counts; return c ? {figure: figure(String(Object.values(c).reduce((a, b) => a + b, 0)), 'routes to rooms'), lines: Object.entries(c).slice(0, 4).map(([k, v]) => k + ' ' + v)} : []; }],
       F.newsroom?.[0],
     ].filter(Boolean),
@@ -537,8 +653,9 @@
   });
 
   // ---- situation: the map reads stories in the shape the original page used
-  function situation(s) {
-    const stories = s.stories.map((x, i) => ({id: x.news_id, name: x.title, state: (x.rooms ?? []).includes('polymarket') ? 'debating' : 'headlines_only', age_s: x.age_s, newest_at: Date.now() / 1000 - (x.age_s ?? 0), rank: i,
+  function situation(s, debated) {
+    if (s?.state === 'unknown' || !Array.isArray(s?.stories)) return {state: 'unknown', reason: s?.reason, as_of: s?.as_of};
+    const stories = s.stories.map((x, i) => ({id: x.news_id, name: x.title, state: debated?.has(x.news_id) ? 'debating' : (x.rooms ?? []).includes('polymarket') ? 'watching' : 'headlines_only', age_s: x.age_s, newest_at: Date.now() / 1000 - (x.age_s ?? 0), rank: i,
       places: x.places.map(p => ({name: p.name, lat: p.lat, lon: p.lon})), counts: {headlines: 1}, headlines: [{title: x.title + ' (' + x.source + ')', age_s: x.age_s}], geography_status: 'named'}));
     return {stories, as_of: s.as_of, note: s.note};
   }
@@ -547,7 +664,8 @@
   const feedKinds = {story: 'Story', j7: 'J7'};
   function events(mk, now, mail) {
     const out = [], once = new Set();
-    for (const w of (mk?.newsroom?.wire ?? []).slice(0, 10)) for (const r of w.routes ?? []) {
+    const wire = mk?.newsroom?.wire;
+    for (const w of Array.isArray(wire) ? wire.slice(0, 10) : []) for (const r of w.routes ?? []) {
       const room = ROOM_OF[r.room] ?? 'newsroom';
       if (once.has(w.news_id + ':' + room)) continue;      // stocks and perps both land in Trading: one card
       once.add(w.news_id + ':' + room);

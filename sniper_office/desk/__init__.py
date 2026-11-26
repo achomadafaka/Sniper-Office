@@ -124,6 +124,13 @@ FACT_LINE = re.compile(r'^\[[^\]]+\] ([0-9a-f]{8}) (\w+): ')
 NO_MATCH = dict(state='known', facts=0, hint='No matching facts. This is not an outage: nothing is recorded on that yet. Try fewer or other words, a topic (lane:perps, strategy:<id>, coin:BTC), or drop the kind filter; broaden the query.')
 
 
+def _down(done=None, exc=None):
+    """brain_unavailable with how it died: the exit code and stderr tail, or the exception name (a timeout is TimeoutExpired)."""
+    if exc is not None:
+        return P.unknown('brain_unavailable', error=type(exc).__name__)
+    return P.unknown('brain_unavailable', rc=done.returncode, detail=(done.stderr or '').strip()[-200:] or None)
+
+
 def _read(tools, text, topic, kind):
     if topic is not None and not (isinstance(topic, str) and TOPIC.match(topic)):
         return P.refused('topic_invalid')
@@ -134,14 +141,14 @@ def _read(tools, text, topic, kind):
     kind = 'finding' if kind == 'lesson' else kind
     try:
         done = _brain_run(tools, 'entity', '--', *topic.split(':', 1)) if topic else _brain_run(tools, 'ask', '--', text)
-    except (OSError, subprocess.SubprocessError):
-        return P.unknown('brain_unavailable')
+    except (OSError, subprocess.SubprocessError) as exc:
+        return _down(exc=exc)
     if topic and done.returncode == 2 and 'no such entity' in done.stdout:
         return P.out(NO_MATCH)
     if done.returncode == 2:
         return P.refused('brain_refused', detail=(done.stdout + done.stderr).strip()[-300:])
     if done.returncode:
-        return P.unknown('brain_unavailable')
+        return _down(done)
     lines = done.stdout.splitlines()
     if kind:   # the CLI has no kind filter: keep the fact lines of that kind
         lines = [x for x in lines if (m := FACT_LINE.match(x)) and m.group(2) == kind]
@@ -178,7 +185,7 @@ def _note(tools, text, kind, topics):
         if ep.returncode == 2:   # the brain answered and refused: say why, it is not an outage
             return P.refused('brain_refused', detail=(ep.stdout + ep.stderr).strip()[-300:])
         if ep.returncode or not m:
-            return P.unknown('brain_unavailable')
+            return _down(ep)
         args = ['write', '--role', role, '--kind', brain_kind, '--entity', 'actor:' + role]   # the author stays attached
         for t in dict.fromkeys(topics):
             args += ['--entity', t]
@@ -186,12 +193,12 @@ def _note(tools, text, kind, topics):
         if brain_kind != 'observation':   # only an observation may rest on its episode alone
             args += ['--evidence', 'episode:' + m.group(1)]
         done = _brain_run(tools, *args, '--section', tools.cfg.get('brain_section', 'general'), '--', text)
-    except (OSError, subprocess.SubprocessError):
-        return P.unknown('brain_unavailable')
+    except (OSError, subprocess.SubprocessError) as exc:
+        return _down(exc=exc)
     if done.returncode == 2:
         return P.refused('brain_refused', detail=(done.stdout + done.stderr).strip()[-300:])
     if done.returncode not in (0, 3) or not done.stdout:
-        return P.unknown('brain_unavailable')
+        return _down(done)
     if done.returncode == 3:   # needs judgement: nothing was created, so the note stays as the episode and the seat is told what to do
         return result('Saved as an episode, not as a new fact: a similar fact exists (below). If yours adds something, note it again and say what is different.\n' + done.stdout[-1500:])
     return result(done.stdout[-MAX_OUTPUT:])
@@ -219,14 +226,14 @@ TOOLS = (
      {'rules': {'type': 'array', 'items': {'type': 'object'}}, 'reason': S, 'after_case': {'type': 'string', 'description': 'Order id or coin that prompted this filter, if one did.'}}, ['rules', 'reason'], P.feed_filter_set),
     ('paper', 'sheet_read', 'The sheet for one ticket: decision-time facts stored with the ticket (run-up, volume, txns, reserves, liquidity, age, fdv) kept apart from a live re-read of the pool (now_read, with its own fetch time) and the last-60s trade count. state known when that core is complete, else partial with a missing list. cluster and dump_group are unknown (not collected here). Provider claims, not fills.', {'ticket_id': S}, ['ticket_id'], P.sheet_read),
     ('paper', 'results_view', 'Every closed and censored paper order of the configured books, with epoch_id naming the book and net USD: learn from them. Modelled fills, no landing proof.', {}, [], P.results_view),
-    ('paper', 'book_view', 'Head and Judge. Your book now: open positions, equity with its state (unknown while a position is open: valuation is not built here), today\'s PnL against the daily-loss halt, and entry_halt: state halted, resumed or never_set (no receipt yet; entries open). paper_order enforces the same state.', {}, [], P.book_view),
+    ('paper', 'book_view', 'Head and the order seats (Judges, Copy desk, Scout). Your book now: open positions, equity with its state (unknown while a position is open: valuation is not built here), today\'s PnL against the daily-loss halt, and entry_halt: state halted, resumed or never_set (no receipt yet; entries open). paper_order enforces the same state.', {}, [], P.book_view),
     ('paper', 'candidate_register', 'Record a coin you are considering outside the feed, before any order. First registration keeps its time.', {'network_id': S, 'mint': S, 'pool': S}, ['network_id', 'mint'], P.candidate_register),
-    ('paper', 'paper_order', 'Judges only. Ask for one paper entry on a feed ticket; one per coin per epoch. Optional sl_pct, tp_pct, trail_pct set this order\'s exits inside the policy rail_bounds. The request is recorded, state queued, filled false; the desk filler process fills it later, and only if a real price is known.',
+    ('paper', 'paper_order', 'Order seats only (Judges, Copy desk, Scout). Ask for one paper entry on a feed ticket; one per coin per epoch. Optional sl_pct, tp_pct, trail_pct set this order\'s exits inside the policy rail_bounds. The request is recorded, state queued, filled false; the desk filler process fills it later, and only if a real price is known.',
      {'ticket_id': S, 'reason': S, 'thesis': {'type': 'string', 'description': 'Why this coin pays, one line.'}, 'disproof': {'type': 'string', 'description': 'The fact that would prove the thesis wrong, one line.'},
       'exit_plan': {'type': 'string', 'description': 'When you get out and why, one line.'}, 'sl_pct': {'type': 'number'}, 'tp_pct': {'type': 'number'}, 'trail_pct': {'type': 'number'},
       'max_entry_price_usd': {'type': 'number', 'description': 'Optional cap: the filler does not fill above this price (after slippage); it retries until the entry timeout, then the order is censored above_max_entry_price.'}}, ['ticket_id', 'reason', 'thesis', 'disproof', 'exit_plan'], P.paper_order),
-    ('paper', 'order_review', 'Judges only. Review one closed paper order of your book: cause (what went wrong) and change (what you will do differently). A closed order with a net loss refuses your next paper_order (review_pending) until it has one.', {'order_id': S, 'cause': S, 'change': S}, ['order_id', 'cause', 'change'], P.order_review),
-    ('paper', 'paper_exit', 'Judges only. Ask to exit one open paper order now, with your reason. The request is recorded, state queued; the desk filler process executes it at a real price when one is known.', {'order_id': S, 'reason': S}, ['order_id', 'reason'], P.paper_exit),
+    ('paper', 'order_review', 'Order seats only (Judges, Copy desk, Scout). Review one closed paper order of your book: cause (what went wrong) and change (what you will do differently). A closed order with a net loss refuses your next paper_order (review_pending) until it has one.', {'order_id': S, 'cause': S, 'change': S}, ['order_id', 'cause', 'change'], P.order_review),
+    ('paper', 'paper_exit', 'Order seats only (Judges, Copy desk, Scout). Ask to exit one open paper order now, with your reason. The request is recorded, state queued; the desk filler process executes it at a real price when one is known.', {'order_id': S, 'reason': S}, ['order_id', 'reason'], P.paper_exit),
     ('paper', 'book_halt', 'Head only. action halt or resume. A halt refuses all new paper orders.', {'action': S, 'reason': S}, ['action', 'reason'], P.book_halt),
     ('chain', 'chain_wallet_history', 'Solana signatures for a wallet, newest first, read-only. as_of (unix seconds) returns the newest at or before it; page with page_token. Without as_of, before pages. truncated means more exists. Numbers and addresses only.',
      {'address': S, 'page_token': S, 'limit': {'type': 'integer'}, 'before': S, 'as_of': {'type': 'number'}}, ['address'], chain_wallet_history),

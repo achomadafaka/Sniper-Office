@@ -44,6 +44,8 @@ def test_pm_refusals(dbs, kw, reason):
     assert pm_order(led, feed, **kw)['reason'] == reason
     assert led.execute('SELECT COUNT(*) FROM bk_positions').fetchone()[0] == 0
     assert led.execute('SELECT COUNT(*) FROM bk_books').fetchone()[0] == 0        # a refusal leaves no book behind
+    ev = led.execute("SELECT book_id,kind,detail_json FROM bk_events").fetchall()
+    assert [(e[0], e[1], json.loads(e[2])['reason']) for e in ev] == [('pm-x', 'refused', reason)]      # but it is recorded, so a silent lane can be diagnosed
 
 
 def test_pm_stale_quote_wide_spread_extreme_price_and_depth(dbs):

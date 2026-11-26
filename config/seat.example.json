@@ -6,7 +6,7 @@
  "family": "claude",
  "model": "claude-sonnet-5-5",
  "effort": "medium",
- "sdk_version": "0.2.175",
+ "sdk_version": "0.2.189",
  "prompt_file": "/etc/myproject/prompts/reviewer.md",
 
  "account_alias": "claude-main",

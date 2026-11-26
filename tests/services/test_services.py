@@ -108,6 +108,28 @@ def test_watchdog_heartbeat_needs_two_breaches_and_kill_fires_once_per_new_pause
     assert k3 == []
 
 
+def test_watchdog_pauses_when_the_seat_user_nears_its_task_cap_and_unreadable_counts_are_unknown(tmp_path):
+    # The seat user's slice hit TasksMax 6830 times (kernel "fork rejected by pids controller"): threads and browsers failed to start
+    # mid-wake. Near the cap the guard pauses new wakes instead; it lifts by itself once the count falls.
+    cg = tmp_path / 'user-995.slice'
+    cg.mkdir()
+    (cg / 'pids.max').write_text('2048\n')
+    (cg / 'pids.current').write_text('200\n')
+    cfg = dict(guard_file=str(tmp_path / 'g.json'), pids_cgroup=str(cg))
+    g = HW.Guard(cfg)
+    doc = tick(cfg, g, NOW)
+    assert doc['state'] == 'ready' and doc['sample']['pids'] == [200, 2048]
+    (cg / 'pids.current').write_text('1700\n')
+    doc = tick(cfg, g, NOW + 1)
+    assert doc['reason'] == 'pids_pressure' and doc['latched'] is False
+    (cg / 'pids.current').write_text('300\n')
+    assert tick(cfg, g, NOW + 2)['state'] == 'paused' and tick(cfg, g, NOW + 903)['state'] == 'ready'
+    (cg / 'pids.max').write_text('max\n')
+    assert tick(cfg, g, NOW + 904)['state'] == 'ready'                       # no cap: nothing to run out of
+    (cg / 'pids.current').unlink()
+    assert tick(cfg, HW.Guard(cfg), NOW + 905)['reason'] == 'telemetry_unknown'
+
+
 def test_real_proc_sample_reads_this_host():
     s = HW.sample({}, NOW)
     assert not s['telemetry_error'] and 0 <= s['cpu'] <= 1 and s['mem'] > 0

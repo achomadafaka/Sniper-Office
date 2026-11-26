@@ -29,7 +29,7 @@ def test_claude_error_retains_bounded_safe_detail_without_prompt_or_credentials(
     error=('invalid_json_schema: additionalProperties missing; '+secret+
            ' Authorization: Bearer ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 '+
            'access_token="actual-private-token" https://example.com/?api_key=very-secret '+
-           '/home/bigpapi/.claude/private.json '+('x'*1500))
+           '/home/example-user/.claude/private.json '+('x'*1500))
     async def query(**kw):
         yield SimpleNamespace(result=error,structured_output=None,is_error=True,
             session_id='session',usage={},uuid='result')
@@ -41,7 +41,7 @@ def test_claude_error_retains_bounded_safe_detail_without_prompt_or_credentials(
     detail=result['provider_error_detail']
     assert 'invalid_json_schema' in detail and 'additionalProperties' in detail
     assert len(detail.encode())<=512
-    for value in (secret,'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789','actual-private-token','very-secret','/home/bigpapi'):
+    for value in (secret,'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789','actual-private-token','very-secret','/home/example-user'):
         assert value not in detail
         assert value not in json.dumps(result)
 

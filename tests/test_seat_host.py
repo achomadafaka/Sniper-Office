@@ -10,7 +10,8 @@ COUNTS=dict(input_tokens=10,output_tokens=2,cache_read_input_tokens=9,cache_crea
 
 
 @pytest.mark.parametrize('overflow',[False,True])
-def test_wake_rejects_a_result_followed_by_output_overflow(db,tmp_path,monkeypatch,overflow):
+@pytest.mark.parametrize('operator_note',[False,True])
+def test_wake_rejects_a_result_followed_by_output_overflow(db,tmp_path,monkeypatch,overflow,operator_note):
     import json,sys
     from types import SimpleNamespace
     seat=H.Seat.__new__(H.Seat)
@@ -22,12 +23,17 @@ def test_wake_rejects_a_result_followed_by_output_overflow(db,tmp_path,monkeypat
                   default_sleep_s=60,sdk_version='test',usage_scope='per_wake')
     seat.guard=SimpleNamespace(spacing_s=60)
     seat._snapshot_credential=lambda:None;seat._prompt=lambda *a:'hello';seat._event=lambda *a,**k:None;seat._save=lambda:None
+    seat.plugins=H.P.Host(seat.cfg)
+    receipts=[]
+    operator_text='Check the quote age'
+    if operator_note:
+        seat.plugins.operator_note_source=lambda _: ([dict(id='n1',text=operator_text)],lambda:receipts.append('n1'))
     fake=SimpleNamespace(start=lambda:None,stop=lambda:None,sleep_until=None,tainted=False,operator_mail=False)
     monkeypatch.setattr(H.T,'SeatTools',lambda **k:fake)
     seat.state['operator_influence']=True   # read in the wake before: this wake is labelled, the next is not
     result=dict(kind='result',session_id='00000000-0000-0000-0000-000000000000',result_id='r',usage=COUNTS,sdk_version='test',is_error=False)
     marker=tmp_path/'finished'
-    code='import sys,json,pathlib; assert json.load(sys.stdin)["prompt"]=="hello"; print(%r,flush=True); '%json.dumps(result)
+    code='import sys,json,pathlib; prompt=json.load(sys.stdin)["prompt"]; assert prompt.startswith("hello"); assert (%r in prompt) is %r; print(%r,flush=True); '%(operator_text,operator_note,json.dumps(result))
     if overflow:code+='sys.stdout.buffer.write(b"x"*2000000); '
     code+='pathlib.Path(%r).touch()'%str(marker)
     monkeypatch.setattr(H.B,'unit_args',lambda *a,**k:[sys.executable,'-c',code])
@@ -35,7 +41,9 @@ def test_wake_rejects_a_result_followed_by_output_overflow(db,tmp_path,monkeypat
     seat.wake('mail')
     row=json.loads(db.execute('SELECT payload_json FROM quota_wakes').fetchone()[0])
     assert row['outcome']==('failed' if overflow else 'ok')
-    assert fake.operator_prior is True and seat.state['operator_influence'] is False
+    assert fake.operator_prior is True and seat.state['operator_influence'] is operator_note
+    assert fake.operator_mail is operator_note
+    assert receipts==(['n1'] if operator_note and not overflow else [])
     if overflow:assert seat.state['failures']==1 and seat.state['not_before']==NOW+60   # the backoff
     else:assert seat.state['failures']==0 and seat.state['not_before']==0
     assert row['state']==('unknown' if overflow else 'known')

@@ -7,8 +7,9 @@ Paper only: no venue key, no order to any venue, no signing."""
 
 
 def register(host):
-    from . import api, tools as T, wakes as WK      # imported here so `python3 -m sniper_office.markets.<process>` does not import its own module first
+    from . import api, operator_notes, tools as T, wakes as WK      # imported here so `python3 -m sniper_office.markets.<process>` does not import its own module first
     for group, name, description, properties, required, handler in T.TOOLS:
         host.add_tool(name, description, properties, required, handler, group=group)
+    host.operator_note_source = operator_notes.for_wake
     WK.register(host)
     api.register_panels(host)
