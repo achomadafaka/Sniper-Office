@@ -18,7 +18,7 @@ from . import common as C
 
 START_CASH = 1000.0
 POLICY = dict(
-    start_cash=START_CASH, quote_max_age_s=120.0, max_open=5, max_margin_pct=25.0,
+    start_cash=START_CASH, review_gate=True, quote_max_age_s=120.0, max_open=5, max_margin_pct=25.0,
     pm_min_price=0.03, pm_max_price=0.97, pm_max_spread=0.06,
     perp_max_leverage=5.0, perp_slip_bps=2.0, perp_fee_bps=4.5, perp_max_hold_s=4 * 3600.0, perp_sl_pct=(0.1, 10.0), perp_tp_pct=(0.1, 30.0),
     stock_max_leverage=5.0, stock_cost_bps=2.0, stock_quote_max_age_s=180.0, stock_no_new_s=1800.0, stock_flat_before_s=300.0, stock_sl_pct=(0.1, 10.0), stock_tp_pct=(0.1, 30.0),
@@ -114,17 +114,21 @@ def _plan(args):
 
 
 def _strategy(led, lane, args):
-    sid, why = args.get('strategy'), ' '.join(str(args.get('strategy_reason') or '').split())[:500]
+    """Every order names a strategy of this lane that is registered and not retired; "none fits" and no strategy are refused."""
     from . import strategies as S
-    if sid in (None, ''):
-        return None, None
-    if sid == S.NONE_FITS:
-        if not why:
-            raise Refused('strategy_reason_required', rule='"none fits" needs one sentence in strategy_reason')
-        return S.NONE_FITS, why
-    if sid in S.options(lane) or led.execute('SELECT 1 FROM bk_strategies WHERE strategy_id=? AND lane=? AND status<>?', (sid, lane, 'killed')).fetchone():
-        return sid, None
-    raise Refused('strategy_unknown', strategy=sid, available=sorted(S.options(lane)))
+    sid = args.get('strategy')
+    bad = 'strategy_unregistered' if not isinstance(sid, str) or sid in ('', S.NONE_FITS) else S.usable(led, lane, sid)
+    if bad:
+        raise Refused(bad, strategy=sid, available=sorted(S.options(lane)),
+                      rule='name a strategy from this lane\'s strategies tool; to test an idea, register it first (hypothesis, entry_rule, exit_rule, kill_criterion, min_n) with the lane\'s strategy_register tool')
+    return sid, None
+
+
+def unreviewed(led, b, role):
+    """Closed losing positions of the book that the book's own seat has not written a lesson (with a cause and a change) for."""
+    return [dict(r) for r in led.execute(
+        "SELECT pos_id,instrument,side,entry_price,exit_price,realized,exit_reason,thesis,disproof,strategy_id FROM bk_positions p WHERE book_id=? AND status='closed' AND realized<0 AND NOT EXISTS "
+        "(SELECT 1 FROM bk_lessons l WHERE l.pos_id=p.pos_id AND l.by_role=? AND IFNULL(l.cause,'')<>'' AND IFNULL(l.change,'')<>'') ORDER BY exit_at LIMIT 10", (b['book_id'], role or b['role']))]
 
 
 def _gate(led, b, pol, margin, lane):
@@ -248,6 +252,8 @@ def place(led, feed, book_id, lane, args, now, pol, actor=None, role=None):
     try:
         with C.txn(led):
             b = book(led, book_id, lane, actor, role, now, pol['start_cash'])
+            if pol['review_gate'] and not b['halted'] and (owed := unreviewed(led, b, role)):
+                raise Refused('review_pending', unreviewed=owed, next='call lesson_add for each pos_id: pos_id, cause (what went wrong), change (what you will do differently); then order again')
             return dict(state='filled', pos_id=OPEN[lane](led, feed, b, now, args, pol), book_id=book_id)
     except Refused as r:
         return dict(state='refused', reason=r.reason, **r.more)
@@ -302,6 +308,10 @@ def close(led, pos, price, now, reason, pol, *, proof=None, fee=None, payout_per
     led.execute("UPDATE bk_positions SET status='closed',exit_price=?,exit_at=?,exit_reason=?,exit_fee=?,realized=?,mark=?,mark_at=? WHERE pos_id=? AND status='open'", (price, now, reason, fee, realized, price, now, pos['pos_id']))
     led.execute('UPDATE bk_books SET cash=cash+? WHERE book_id=?', (back, pos['book_id']))
     event(led, pos['book_id'], pos['pos_id'], now, 'close', dict(reason=reason, price=price, fee=fee, realized=realized, proof=proof))
+    if pos['strategy_id']:
+        from . import strategies as S
+        if stats := S.retire_check(led, pos['strategy_id'], now):
+            event(led, pos['book_id'], pos['pos_id'], now, 'strategy_retired', dict(strategy_id=pos['strategy_id'], **stats))
     return realized
 
 

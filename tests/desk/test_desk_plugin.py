@@ -73,7 +73,7 @@ def call(t, name, **args):
 
 def test_registration_names_every_ported_tool_in_its_group_and_a_seat_without_the_group_cannot_name_it(tmp_path, monkeypatch):
     host = P.load(dict(plugins=['sniper_office.desk']))
-    expected = {'results_view', 'book_view', 'sheet_read', 'feed_list', 'feed_filter_set', 'candidate_register', 'paper_order', 'paper_exit', 'book_halt', 'network_read', 'network_expand',
+    expected = {'results_view', 'book_view', 'sheet_read', 'feed_list', 'feed_filter_set', 'candidate_register', 'paper_order', 'order_review', 'paper_exit', 'book_halt', 'network_read', 'network_expand',
                 'chain_wallet_history', 'chain_transaction', 'chain_funding_trace', 'chain_token_holders', 'brain_read', 'brain_note', 'market_data', 'signal_list', 'signal_read', 'chart_read', 'position_live'}
     assert set(host.tools) == expected
     assert {t.group for t in host.tools.values()} == set(GROUPS)

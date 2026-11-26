@@ -1,4 +1,4 @@
-"""Seat tools of the markets plug-in, grouped 'polymarket', 'perps', 'stocks', 'news'. Host side: they read the feed db (markets_db) and write the Office ledger (markets_ledger_db) of the seat's own books.
+"""Seat tools of the markets plug-in, grouped 'polymarket', 'perps', 'stocks', 'news', 'office'. Host side: they read the feed db (markets_db) and write the Office ledger (markets_ledger_db) of the seat's own books.
 Paper only. An order is checked (role, plan, rails, halt, depth, fresh quote) and filled at once from the newest fetched tick, or refused with a reason; there is no queue. Unknown or stale is state 'unknown', never a default."""
 import contextlib
 import json
@@ -12,7 +12,7 @@ from . import books as B, common as C, router as R, sports as SP, strategies as 
 S = {'type': 'string'}
 N = {'type': 'number'}
 PLAN = {'thesis': dict(S, description='Why this pays, one line.'), 'disproof': dict(S, description='The fact that would prove it wrong, one line.'), 'exit_plan': dict(S, description='When you get out and why, one line.'),
-        'strategy': dict(S, description='A strategy id from pm_/perp_/stock_strategies, or "none fits" with strategy_reason.'), 'strategy_reason': S, 'news_id': dict(S, description='The story this order follows, if any.')}
+        'strategy': dict(S, description='Required: the id of a registered, active strategy of this lane (pm_/perp_/stock_strategies). Register one with the lane\'s strategy_register first.'), 'news_id': dict(S, description='The story this order follows, if any.')}
 BOOK_PREFIX = dict(polymarket='pm', perps='perps', stocks='stocks')
 
 
@@ -115,7 +115,7 @@ def lane_book(lane):
 
 def lane_strategies(lane):
     def fn(tools, feed, led, pol, role, now):
-        return out(dict(ST.results(led, lane), choose_with='order field strategy; "none fits" needs strategy_reason'))
+        return out(dict(ST.results(led, lane), choose_with='order field strategy (required): an id from this list that is not retired; register an experiment first if none fits'))
     return guarded(fn)
 
 
@@ -423,11 +423,29 @@ def explorer_notes(tools, feed, led, pol, role, now, limit=10):
 
 
 @guarded
-def lesson_add(tools, feed, led, pol, role, now, lesson, for_role=None, pos_id=None):
-    if not str(lesson or '').strip():
+def lesson_add(tools, feed, led, pol, role, now, lesson=None, for_role=None, pos_id=None, cause=None, change=None):
+    """A lesson on a position (pos_id) needs a cause and a change; that is the review that lifts review_pending. A lesson with no pos_id is a free note."""
+    if pos_id is not None:
+        if not str(cause or '').strip() or not str(change or '').strip():
+            return refused('cause_and_change_required', rule='cause: what went wrong; change: what you will do differently')
+        if not led.execute("SELECT 1 FROM bk_positions WHERE pos_id=? AND status='closed'", (pos_id,)).fetchone():
+            return refused('pos_unknown_or_open', rule='pos_id of a closed position')
+        lesson = str(lesson or '').strip() or 'cause: %s | change: %s' % (str(cause).strip(), str(change).strip())
+    elif not str(lesson or '').strip():
         return refused('lesson_required')
-    led.execute('INSERT INTO bk_lessons(role,by_role,at,pos_id,lesson) VALUES(?,?,?,?,?)', (for_role or role, role, now, pos_id, str(lesson)[:600]))
+    led.execute('INSERT INTO bk_lessons(role,by_role,at,pos_id,lesson,cause,change) VALUES(?,?,?,?,?,?,?)',
+                (for_role or role, role, now, pos_id, str(lesson)[:600], None if cause is None else str(cause)[:600], None if change is None else str(change)[:600]))
     return out(dict(state='recorded'))
+
+
+@guarded
+def lane_halt(tools, feed, led, pol, role, now, book_id, action, reason):
+    if action not in ('halt', 'resume') or not str(reason or '').strip():
+        return refused('action_and_reason_required', rule='action halt|resume, reason one line')
+    if not led.execute('UPDATE bk_books SET halted=? WHERE book_id=?', (1 if action == 'halt' else 0, book_id)).rowcount:
+        return refused('book_unknown')
+    B.event(led, book_id, None, now, action, dict(reason=str(reason)[:500], by=role, actor=tools.actor))
+    return out(dict(state=action, book_id=book_id))
 
 
 @guarded
@@ -478,8 +496,8 @@ def _lane_tools(lane, pfx, order_props, order_desc, lane_extra=()):
         (lane, pfx + '_exit', 'Exit one open position of your book now at the newest fetched price; the reason is recorded. Unpriced or closed market: refused, the position stays open.', {'pos_id': S, 'reason': S}, ['pos_id', 'reason'], lane_exit(lane)),
         (lane, pfx + '_book', 'Your %s paper book: cash, equity (unknown while a position has no fresh price), realized and unrealized PnL per position and in total, liquidation and rail prices, closed results.' % lane, {}, [], lane_book(lane)),
         (lane, pfx + '_strategies', 'The written strategies of this lane and the seat-registered experiments, with settled count, mean result in percent of margin and a computed verdict. Read before choosing a strategy.', {}, [], lane_strategies(lane)),
-        (lane, pfx + '_strategy_register', 'Register an experiment strategy (hypothesis, entry_rule, exit_rule, kill_criterion, each 1-600 chars; at most 5 per UTC day). Orders may then name its id.',
-         dict(hypothesis=S, entry_rule=S, exit_rule=S, kill_criterion=S, expected_triggers_per_day=N), ['hypothesis', 'entry_rule', 'exit_rule', 'kill_criterion'], lane_register(lane)),
+        (lane, pfx + '_strategy_register', 'Register an experiment strategy (hypothesis, entry_rule, exit_rule, kill_criterion, each 1-600 chars; at most 5 per UTC day). Orders must name a registered id. Optional min_n (default 10) and a machine kill field: kill_mean_lt (mean realized USD per trade) or kill_winrate_lt (0-1); once n >= min_n and the result is under it, the strategy is retired and refuses orders.',
+         dict(hypothesis=S, entry_rule=S, exit_rule=S, kill_criterion=S, expected_triggers_per_day=N, min_n=N, kill_mean_lt=N, kill_winrate_lt=N), ['hypothesis', 'entry_rule', 'exit_rule', 'kill_criterion'], lane_register(lane)),
     ] + list(lane_extra)
 
 
@@ -520,12 +538,14 @@ TOOLS = (
      ('news', 'explorer_note', 'Explorer: record the free-hour topic, why this, notebook text and up to 10 leads (condition_id, side, note); each lead stores the ask at note time and its outcome is read at resolution.',
       dict(topic=S, why_this=S, notebook=S, leads={'type': 'array', 'items': {'type': 'object'}}), ['topic', 'why_this'], explorer_note),
      ('news', 'explorer_notes', 'Recent explorer notes and lead outcomes.', dict(limit=N), [], explorer_notes),
-     ('news', 'lesson_add', 'Coach and seats: one-line lesson for a role (default yours), optionally on a position id.', dict(lesson=S, for_role=S, pos_id=S), ['lesson'], lesson_add),
+     ('news', 'lesson_add', 'Lesson for a role (default yours). On a closed position (pos_id) it needs cause and change; a losing close must have one before your next order (review_pending).', dict(lesson=S, for_role=S, pos_id=S, cause=dict(S, description='What went wrong (needed with pos_id).'), change=dict(S, description='What you will do differently (needed with pos_id).')), [], lesson_add),
      ('news', 'lessons_read', 'Lessons addressed to or written by you.', dict(limit=N), [], lessons_read),
      ('news', 'skill_save', 'Write or revise a skill (ordered steps) with the reason; every version is kept.', dict(skill=S, steps=S, why=S), ['skill', 'steps', 'why'], skill_save),
      ('news', 'skills_read', 'Current skills (newest version of each).', dict(skill=S), [], skills_read),
      ('news', 'review_add', 'Coach: record a desk review and priorities.', dict(review=S, priorities=S), ['review'], review_add),
      ('news', 'video_rule_add', 'Record a trading rule read from a public video page (its https url, title, the rule in your words) as a paper rule under test.', dict(rule_text=S, source_url=S, title=S, instrument=S), ['rule_text'], video_rule_add),
-     ('news', 'video_rules', 'Recorded video rules.', {}, [], video_rules)]
+     ('news', 'video_rules', 'Recorded video rules.', {}, [], video_rules),
+     ('office', 'lane_halt', 'Coordinator: halt or resume one lane book (book_id, action halt|resume, reason). A halted book refuses every new order with book_halted; open positions keep running. Recorded as an event.',
+      dict(book_id=S, action=dict(S, enum=['halt', 'resume']), reason=S), ['book_id', 'action', 'reason'], lane_halt)]
 )
 TOOLS = tuple(TOOLS)

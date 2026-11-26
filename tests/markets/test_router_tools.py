@@ -110,7 +110,7 @@ def test_order_flow_through_tools_pm(dbs):
     assert d['tokens']['YES']['age_s'] == 0 and d['fee']['rate'] == 0.05 and d['question']
     d, err = call('pm_order', t, condition_id=COND, side='YES', usd=100, tp_price=0.7, sl_price=0.3, thesis='', disproof='x', exit_plan='y')
     assert err and d['reason'] == 'plan_missing'
-    d, err = call('pm_order', t, condition_id=COND, side='YES', usd=100, tp_price=0.7, sl_price=0.3, **PLAN)
+    d, err = call('pm_order', t, condition_id=COND, side='YES', usd=100, tp_price=0.7, sl_price=0.3, strategy='pm-news-scalp', **PLAN)
     assert not err and d['state'] == 'filled' and d['book_id'] == 'pm-pm_trader'
     book, _ = call('pm_book', t)
     assert book['open'][0]['live']['unrealized'] < 0 and book['state'] == 'known' and book['open'][0]['thesis'] == PLAN['thesis']
@@ -136,13 +136,13 @@ def test_perp_and_stock_tools(dbs):
     t = FakeTools(tmp, role='perps_trader')
     d, _ = call('perp_markets', t)
     assert d['markets'][0]['coin'] == 'BTC' and d['markets'][0]['funding_apr_pct'] == pytest.approx(0.0001 * 8760 * 100, rel=1e-3)
-    d, err = call('perp_order', t, coin='BTC', side='short', margin_usd=100, leverage=3, tp_pct=4, sl_pct=2, **PLAN)
+    d, err = call('perp_order', t, coin='BTC', side='short', margin_usd=100, leverage=3, tp_pct=4, sl_pct=2, strategy='perps-level-break', **PLAN)
     assert d['state'] == 'filled' and call('perp_book', t)[0]['open'][0]['liq_price'] > 100
     d, _ = call('perp_market', t, coin='BTC')
     assert d['state'] == 'known' and call('perp_market', t, coin='NOPE')[1]
     d, _ = call('stock_quotes', t)
     assert d['quotes'][0]['symbol'] == 'NVDA' and d['quotes'][0]['session_open'] is True
-    d, err = call('stock_order', t, symbol='NVDA', side='long', margin_usd=50, leverage=2, tp_pct=3, sl_pct=1, **PLAN)
+    d, err = call('stock_order', t, symbol='NVDA', side='long', margin_usd=50, leverage=2, tp_pct=3, sl_pct=1, strategy='stock-level-break', **PLAN)
     assert d['state'] == 'filled' and call('stock_book', t)[0]['lane'] == 'stocks'
     assert call('perp_strategies', t)[0]['strategies'] and call('stock_strategy_register', t, hypothesis='a', entry_rule='b', exit_rule='c', kill_criterion='d')[0]['state'] == 'registered'
 
@@ -238,7 +238,7 @@ def test_position_closed_alert_and_candle_wakes(dbs):
     feed, led, tmp = dbs
     put_perp(feed)
     t = FakeTools(tmp, role='perps_trader')
-    pid = call('perp_order', t, coin='BTC', side='long', margin_usd=100, leverage=5, tp_pct=20, sl_pct=10, **PLAN)[0]['pos_id']
+    pid = call('perp_order', t, coin='BTC', side='long', margin_usd=100, leverage=5, tp_pct=20, sl_pct=10, strategy='perps-level-break', **PLAN)[0]['pos_id']
     s = FakeSeat(tmp, 'perps_trader', book_lanes=['perps'], alert_loss_pct=10, candle_wakes_pct=1.0)
     s.now = NOW + 10
     put_perp(feed, mid=98.0, at=NOW + 10)          # about -10% of margin at 5x on a 2% move
@@ -265,7 +265,7 @@ def test_api_shapes_for_the_floor_rooms(dbs):
     C.status(feed, 'news', True, 'ok', NOW)
     from sniper_office.markets import books as B
     pol = B.policy()
-    assert B.place(led, feed, 'pm-a', 'polymarket', dict(condition_id=COND, side='YES', usd=50, tp_price=.7, sl_price=.3, news_id='n1', **PLAN), NOW, pol)['state'] == 'filled'
+    assert B.place(led, feed, 'pm-a', 'polymarket', dict(condition_id=COND, side='YES', usd=50, tp_price=.7, sl_price=.3, news_id='n1', strategy='pm-news-scalp', **PLAN), NOW, pol)['state'] == 'filled'
     call('story_debate', FakeTools(tmp, role='pm_critic'), news_id='n1', text='bear case')
     nr = api.newsroom(feed, led, NOW + 5, pol)
     assert {'wire', 'calls', 'news_calls', 'debates', 'memes', 'feeds', 'room_counts'} <= set(nr)
@@ -276,7 +276,7 @@ def test_api_shapes_for_the_floor_rooms(dbs):
     ctl = api.control(feed, led, NOW + 5, pol)
     assert ctl['books'][0]['halted'] is False and ctl['universe']['pm_markets'] == 1 and ctl['feeds'][0]['feed'] == 'news'
     assert api.book_halt(led, 'pm-a', True, 'operator', NOW)['halted'] is True and api.book_halt(led, 'nope', True, 'operator', NOW)['reason'] == 'book_unknown'
-    assert B.place(led, feed, 'pm-a', 'polymarket', dict(condition_id=COND, side='YES', usd=50, tp_price=.7, sl_price=.3, **PLAN), NOW, pol)['reason'] == 'book_halted'
+    assert B.place(led, feed, 'pm-a', 'polymarket', dict(condition_id=COND, side='YES', usd=50, tp_price=.7, sl_price=.3, strategy='pm-news-scalp', **PLAN), NOW, pol)['reason'] == 'book_halted'
     assert api.operator_say(led, 'operator', 'pm_trader', 'size down', NOW)['state'] == 'recorded' and api.operator_say(led, 'o', None, ' ', NOW)['state'] == 'refused'
     assert api.coach(led)['lessons'] == [] and api.explorer(feed, led, NOW)['notes'] == [] and api.video_lab(led)['rules'] == [] and api.sports(feed, NOW)['games'] == []
     json.dumps([nr, sit, ctl])      # all of it is plain JSON
