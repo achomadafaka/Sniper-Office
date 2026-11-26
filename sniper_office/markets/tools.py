@@ -319,6 +319,19 @@ def pm_trackers(tools, feed, led, pol, role, now, handle=None, hours=48):
 
 
 @guarded
+def office_books(tools, feed, led, pol, role, now, recent=5):
+    """Every lane book (all seats), read-only: cash, open positions, closed count, realized PnL, win count, and the latest closes with their exit reasons."""
+    n = max(0, min(int(recent or 5), 20))
+    books = []
+    for b in led.execute('SELECT * FROM bk_books ORDER BY lane, role').fetchall():
+        agg = led.execute("SELECT SUM(status='open'), SUM(status='closed'), SUM(CASE WHEN status='closed' THEN realized END), SUM(status='closed' AND realized>0) FROM bk_positions WHERE book_id=?", (b['book_id'],)).fetchone()
+        last = led.execute("SELECT instrument,label,side,strategy_id,entry_at,exit_at,realized,exit_reason FROM bk_positions WHERE book_id=? AND status='closed' ORDER BY exit_at DESC LIMIT ?", (b['book_id'], n)).fetchall()
+        books.append(dict(book_id=b['book_id'], lane=b['lane'], role=b['role'], start_cash=b['start_cash'], cash=b['cash'], open=agg[0] or 0, closed=agg[1] or 0,
+                          realized=round(agg[2], 4) if agg[2] is not None else None, wins=agg[3] or 0, latest_closes=[dict(r) for r in last]))
+    return out(dict(state='known' if books else 'unknown', books=books, note='Realized PnL after fees. A handful of closes is too few to judge a strategy.'))
+
+
+@guarded
 def news_call(tools, feed, led, pol, role, now, condition_id, side, expected_move_cents, horizon, confidence, mechanism, reason, news_id=None):
     """A forced paper pick on a headline (the source desk's news-call lab): no abstain, no order, no cash. Filled at the fetched ask of the called token and of the opposite side as control; scored later at 15m, 1h, 6h, 24h on stored bids."""
     m = feed.execute('SELECT * FROM mk_pm_markets WHERE condition_id=?', (condition_id,)).fetchone()
@@ -485,6 +498,7 @@ TOOLS = (
                  ('polymarket', 'pm_trackers', 'Post-count windows from Polymarket\'s tracker (resolution source of the "# tweets/posts" markets): open windows with total so far, pace, hours left and recent hourly counts; closed windows with final counts for base rates. Optional handle (elonmusk, realDonaldTrump), hours of hourly counts (default 48).',
                   dict(handle=S, hours=N), [], pm_trackers),
                  ('polymarket', 'sports_games', 'Today\'s games (ESPN, no key) with the bookmaker line de-vigged to a fair home win probability, and the gap to an open prediction market that names both teams.', dict(league=S, limit=N), [], sports_games)]) +
+    [('office', 'office_books', 'Every lane paper book in the office (prediction markets, perps, stocks; all seats), read-only: cash, open and closed counts, realized PnL, wins, latest closes with exit reasons. For coordination; it places nothing.', dict(recent=N), [], office_books)] +
     _lane_tools('perps', 'perp', dict(coin=S, venue=S, side=dict(S, enum=['long', 'short']), margin_usd=N, leverage=N, tp_pct=N, sl_pct=N, **PLAN),
                 'Paper entry on a perpetual at the newest fetched mid plus slippage, taker fee on notional. Leverage is capped (config, the coin\'s max, and a stop may cost at most half the margin: leverage is cut to fit and the applied value is returned). Needs thesis, disproof, exit_plan, tp_pct, sl_pct (percent of price). Funding accrues, liquidation price is returned; max hold applies.',
                 [('perps', 'perp_markets', 'Tracked perpetuals by day volume: mid, mark, funding (and its annualised pct), open interest, 24h change, max leverage, age.', dict(venue=S, min_day_volume=N, limit=N), [], perp_markets),

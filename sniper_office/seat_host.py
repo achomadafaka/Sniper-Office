@@ -498,8 +498,9 @@ class Seat:
         request=dict(model=self.cfg['model'],system=K.system_prompt(self.cfg),session_id=self.state.get('session_id'),
                      prompt=extra or self._prompt(wake_type,note,new_session),deadline_s=self.cfg['wake_deadline_s'],max_turns=self.cfg['max_turns'],effort=self.cfg.get('effort','medium'))
         if codex:request['account_id']=M.read_token(self.cfg['codex_auth'])[1]
-        argv=B.unit_args(unit,runtime_s=self.cfg['wake_deadline_s']+30)+(B.codex_args if codex else B.harness_args)(self.actor,self.cfg['state_dir'],bridge=self.bridge)+[
-            '/opt/runtime/bin/python3',T.RELEASE+('codex_child.py' if codex else 'seat_child.py')]
+        hermes=codex and self.cfg.get('harness')=='hermes'     # Hermes on the GPT route: codex quota, proxy and walls, its own child
+        argv=B.unit_args(unit,runtime_s=self.cfg['wake_deadline_s']+30)+(B.codex_args if codex else B.harness_args)(self.actor,self.cfg['state_dir'],bridge=self.bridge,**({'hermes':True} if hermes else {}))+[
+            '/opt/runtime/bin/python3',T.RELEASE+('hermes_child.py' if hermes else 'codex_child.py' if codex else 'seat_child.py')]
         self._event('lifecycle','wake_start',refs=dict(type=wake_type,wake_id=wake_id,calibration=calibration))
         stop=threading.Event()
         def watch():
@@ -616,7 +617,7 @@ class Seat:
     def _recover_session(self,note):
         """A session file that is gone cannot resume: start fresh from the note, on a new incarnation, and record it."""
         session=self.state.get('session_id')
-        if not session or R.session_exists(self.cfg['state_dir'],session,family=self.cfg.get('family','claude')):return note
+        if not session or R.session_exists(self.cfg['state_dir'],session,family='hermes' if self.cfg.get('harness')=='hermes' else self.cfg.get('family','claude')):return note
         note=note or self._read_note()
         self._new_incarnation()
         self._event('lifecycle','session_reset',state='known' if note else 'unknown',refs=dict(note_found=bool(note)))

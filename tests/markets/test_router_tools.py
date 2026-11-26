@@ -92,7 +92,7 @@ def test_tool_groups_and_registration():
     groups = {}
     for name, t in h.tools.items():
         groups.setdefault(t.group, []).append(name)
-    assert set(groups) == {'polymarket', 'perps', 'stocks', 'news'}
+    assert set(groups) == {'polymarket', 'perps', 'stocks', 'news', 'office'}
     for need in ('pm_order', 'pm_exit', 'pm_book', 'pm_markets', 'pm_market', 'perp_order', 'perp_book', 'perp_markets', 'stock_order', 'stock_quotes', 'story_list', 'story_route', 'meme_list', 'pm_trackers'):
         assert need in h.tools
     for name in ('pm_order', 'perp_order', 'stock_order'):
@@ -342,3 +342,11 @@ def test_pm_trackers_tool(dbs):
     d, err = call('pm_trackers', FakeTools(tmp), handle='elonmusk', hours=1)
     assert not err and [w['tracking_id'] for w in d['windows']] == ['w1', 'w0']
     assert d['windows'][0]['hourly'] == [['b', 7]] and d['windows'][0]['hours_left'] == 2.0 and d['windows'][1]['total'] == 410 and 'pace' not in d['windows'][1]
+
+
+def test_office_books_reads_every_book(dbs):
+    feed, led, tmp = dbs
+    led.execute("INSERT INTO bk_books(book_id,lane,actor_id,role,start_cash,cash,created_at,halted) VALUES('b1','perps','a','perps_trader',1000,997,1,0)")
+    led.execute("INSERT INTO bk_positions(pos_id,book_id,lane,instrument,side,qty,entry_price,entry_at,leverage,margin,notional,status,realized,exit_at,exit_reason) VALUES('p1','b1','perps','hl:BTC','long',1,1,1,2,50,100,'closed',-2.5,5,'stop_loss')")
+    d, err = call('office_books', FakeTools(tmp))
+    assert not err and d['books'][0]['realized'] == -2.5 and d['books'][0]['latest_closes'][0]['exit_reason'] == 'stop_loss' and d['books'][0]['wins'] == 0

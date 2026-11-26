@@ -48,10 +48,11 @@ def harness_args(actor,state,*,bridge=None):
                          '--ro-bind',str(seat/'model-proxy.sock'),'/opt/proxy.sock','--ro-bind',str(seat/'host.sock'),'/opt/host.sock']
 
 
-def codex_args(actor,state,*,bridge=None,host_sock=True):
-    """No credential at all: the real token stays on the host, in the model proxy. Native shell runs in here, with these same walls."""
+def codex_args(actor,state,*,bridge=None,host_sock=True,hermes=False):
+    """No credential at all: the real token stays on the host, in the model proxy. Native shell runs in here, with these same walls.
+    hermes: also the published Hermes runtime (python, site-packages, agent source), read-only."""
     seat=Path(bridge or BRIDGE)/'seats'/actor
-    return _base(state)+['--ro-bind',str(seat/'codex'),'/opt/codex','--ro-bind',str(seat/'codex-code-mode-host'),'/opt/codex-code-mode-host','--ro-bind',str(seat/'ca.pem'),'/opt/ca.pem',
+    return _base(state)+(['--ro-bind',str(Path(bridge or BRIDGE)/'hermes'),'/opt/hermes'] if hermes else [])+['--ro-bind',str(seat/'codex'),'/opt/codex','--ro-bind',str(seat/'codex-code-mode-host'),'/opt/codex-code-mode-host','--ro-bind',str(seat/'ca.pem'),'/opt/ca.pem',
                          '--ro-bind',str(seat/'model-proxy.sock'),'/opt/proxy.sock']+(['--ro-bind',str(seat/'host.sock'),'/opt/host.sock'] if host_sock else [])
 
 
