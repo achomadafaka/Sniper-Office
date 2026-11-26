@@ -11,7 +11,7 @@ from . import common as C, router as R
 
 GAMMA = 'https://gamma-api.polymarket.com/markets'
 BOOK = 'https://clob.polymarket.com/book?token_id='
-DEFAULTS = dict(top_n=40, min_volume24h=2000.0, max_spread=0.06, min_days_to_end=0.125, pm_fee_rate=0.05, gap_s=0.35, retention_days=7, interval_s=60)
+DEFAULTS = dict(top_n=40, min_volume24h=2000.0, max_spread=0.06, min_days_to_end=0.125, pm_fee_rate=0.05, gap_s=0.35, retention_days=7, interval_s=60, pages=1)
 
 
 def _end(text):
@@ -88,8 +88,9 @@ def tick(cfg, now, sleep=time.sleep):
     feed = C.connect(cfg['markets_db'], C.FEED_SCHEMA)
     markets, held_c, held_t = {}, *_held(cfg)
     try:
-        page = C.get_json('%s?%s' % (GAMMA, urllib.parse.urlencode(dict(active='true', closed='false', order='volume24hr', ascending='false', limit=100))))
-        for m in page if isinstance(page, list) else ():
+        pages = [C.get_json('%s?%s' % (GAMMA, urllib.parse.urlencode(dict(active='true', closed='false', order='volume24hr', ascending='false', limit=100, offset=100 * i))))
+                 for i in range(max(1, int(cfg['pages'])))]
+        for m in (m for page in pages if isinstance(page, list) for m in page):
             row = parse_market(m, cfg, now)
             if row and (row['volume24h'] or 0) >= cfg['min_volume24h'] and row['accepting'] and row['end_ts'] and (row['end_ts'] - now) / 86400 >= cfg['min_days_to_end'] \
                     and (row['ask'] is None or row['bid'] is None or row['ask'] - row['bid'] <= cfg['max_spread']):

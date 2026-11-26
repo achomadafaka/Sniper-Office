@@ -50,6 +50,14 @@ def test_polymarket_tick_stores_markets_books_and_held_tokens(fake, dbs):
     assert feed.execute("SELECT room FROM mk_pm_markets WHERE condition_id=?", (COND,)).fetchone()[0] == 'perps'      # routed by the story router's rules
 
 
+def test_polymarket_tick_pages_gamma_and_dedups(fake, dbs):
+    _, _, tmp = dbs
+    fake.routes = {GAMMA + '?active': [gamma_market()], 'https://clob.polymarket.com/book?token_id=' + YES: book(YES, .48, .50), 'https://clob.polymarket.com/book?token_id=' + NO: book(NO, .50, .52)}
+    detail = PM.tick(dict(markets_db=str(tmp / 'feed.db'), ledger_db=str(tmp / 'ledger.db'), gap_s=0, pages=3), NOW, sleep=lambda s: None)
+    offsets = [u.split('offset=')[1] for u, _ in fake.calls if u.startswith(GAMMA + '?active')]
+    assert offsets == ['0', '100', '200'] and 'markets=1' in detail
+
+
 def test_polymarket_tick_gamma_down_raises_and_records(fake, dbs):
     feed, _, tmp = dbs
     fake.routes = {GAMMA: OSError('down')}
