@@ -321,7 +321,10 @@
     if (!c) return [noMarkets(d)];
     const names = [...new Set(c.skills.map(s => s.skill))];
     return [
-      T('Lessons', c.lessons, [['When', r => when(r.at)], ['For', r => nameOf(r.role)], ['By', r => nameOf(r.by_role)], ['Lesson', r => short(r.lesson, 500)]], 'No lesson recorded yet.'),
+      T('Lessons and loss reviews', c.lessons, [['When', r => when(r.at)], ['For', r => nameOf(r.role)], ['By', r => nameOf(r.by_role)], ['Position', r => r.pos_id], ['Cause', r => short(r.cause, 300)], ['Change', r => short(r.change, 300)], ['Lesson', r => short(r.lesson, 400)]], 'No lesson recorded yet.'),
+      T('Coin desk loss reviews', rowsOf(d, 'order_reviews'), [['When', r => when(r.at)], ['By', r => nameOf(r.role)], ['Order', r => short(r.order_id, 12)], ['Cause', r => short(r.cause, 300)], ['Change', r => short(r.change, 300)]], 'No coin desk loss reviewed yet.'),
+      T('Strategies retired by their kill rule', c.retired ?? [], [['When', r => when(r.retired_at)], ['Lane', r => r.lane], ['Strategy', r => r.strategy_id], ['Stats', r => short(r.stats_json, 300)]], 'No strategy retired yet.'),
+      T('Halts and retirements', c.halts ?? [], [['When', r => when(r.at)], ['Book', r => r.book_id], ['Event', r => r.kind], ['Detail', r => short(r.detail_json, 300)]], 'No halt or retirement yet.'),
       T('Skills (every version, newest first)', c.skills, [['When', r => when(r.at)], ['Skill', r => r.skill], ['By', r => nameOf(r.by_role)], ['Steps', r => short(r.steps, 400)], ['Why', r => short(r.why, 200)]], 'No skill saved yet.', r => 'skill-' + r.id),
       T('Reviews', c.reviews, [['When', r => when(r.at)], ['By', r => nameOf(r.by_role)], ['Review', r => short(r.review, 500)], ['Priorities', r => short(r.priorities, 300)]], 'No coach review yet.'),
       section('Skills registered', el('p', names.length ? names.join(' · ') : 'none')),
@@ -513,7 +516,8 @@
     ].filter(Boolean),
     strategies: [['Strategies', 'gold', d => lines(d, mk => (mk.strategies?.strategies ?? []).slice(0, 4).map(s => [short(s.name ?? s.strategy_id, 26), s.status, s.settled_n + ' settled'].join(' · ')))],
       ['By lane', 'screen', d => lines(d, mk => Object.entries(mk.strategies?.totals_by_lane ?? {}).slice(0, 4).map(([k, v]) => laneLine(k, v)))]],
-    'paper-labs': [['News calls', 'screen', d => lines(d, mk => { const c = mk.paper_labs?.news_calls ?? []; return {figure: figure(String(c.length), 'forced paper calls'), lines: c.slice(0, 3).map(x => [x.side, cents(x.entry_ask), x.horizon].filter(Boolean).join(' · '))}; })],
+    'paper-labs': [['Rule markets', 'screen', d => lines(d, mk => { const r = mk.paper_labs?.rule_markets; return r ? {figure: figure(String(r.temperature + r.posts), 'temperature and post-count markets'), lines: (r.trackers ?? []).filter(t => t.total).slice(0, 3).map(t => short(t.title, 40) + ' · ' + t.total + ' so far, pace ' + t.pace)} : []; })],
+      ['News calls', 'screen', d => lines(d, mk => { const c = mk.paper_labs?.news_calls ?? []; return {figure: figure(String(c.length), 'forced paper calls'), lines: c.slice(0, 3).map(x => [x.side, cents(x.entry_ask), x.horizon].filter(Boolean).join(' · '))}; })],
       ['Books', 'paper', d => lines(d, mk => (mk.paper_labs?.books ?? []).map(b => [b.lane, usd((b.realized_total ?? 0) + (b.unrealized_total ?? 0)), (b.open ?? []).length + ' open'].join(' · ')))]],
     sports: [['Games', 'screen', d => lines(d, mk => { const g = mk.sports?.games ?? []; return {figure: figure(String(g.length), 'games, last hour'), lines: g.slice(0, 3).map(x => x.away + ' at ' + x.home + (fin(x.fair_home) ? ' · fair ' + Math.round(100 * x.fair_home) + '%' : ''))}; })],
       ['Edges', 'gold', d => lines(d, mk => (mk.sports?.edges ?? []).slice(0, 3).map(e => [e.side ?? e.team, fin(e.gap_pp) ? e.gap_pp.toFixed(1) + ' pp' : null].filter(Boolean).join(' · ')))]],
@@ -521,7 +525,7 @@
     memes: [['Candidates', 'screen', d => lines(d, mk => { const m = mk.memes ?? []; return {figure: figure(String(m.length), 'meme candidates'), lines: m.slice(0, 3).map(x => [x.name, x.ticker ? '$' + x.ticker : null].filter(Boolean).join(' '))}; })],
       ['Narrative matches', 'paper', d => (rowsOf(d, 'narrative_matches') ?? []).slice(0, 3).map(m => [m.match_kind, m.symbol ?? N.text(m.network_id, m.mint)].join(' · '))],
       ['X mentions', 'cabinet', d => (rowsOf(d, 'x_mentions') ?? []).slice(0, 3).map(m => [xhandle(m.author), m.ticker ? '$' + m.ticker : null].filter(Boolean).join(' · '))]],
-    coach: [['Lessons', 'notebook', d => lines(d, mk => (mk.coach?.lessons ?? []).slice(0, 2).map(l => short(l.lesson, 70)))], ['Skills', 'gold', d => lines(d, mk => [...new Set((mk.coach?.skills ?? []).map(s => s.skill))].slice(0, 3))]],
+    coach: [['Lessons', 'notebook', d => lines(d, mk => { const l = mk.coach?.lessons ?? []; return {figure: figure(String(l.filter(x => x.pos_id).length), 'losses reviewed'), lines: l.slice(0, 2).map(x => short(x.change || x.lesson, 70)).concat((mk.coach?.retired ?? []).length ? [(mk.coach.retired.length) + ' strategies retired'] : [])}; })], ['Skills', 'gold', d => lines(d, mk => [...new Set((mk.coach?.skills ?? []).map(s => s.skill))].slice(0, 3))]],
     lab: [['Video rules', 'cabinet', d => lines(d, mk => (mk.lab?.rules ?? []).slice(0, 3).map(r => short(r.title ?? r.rule_text, 50) + ' · ' + r.status))]],
     control: [['Problems', 'screen', d => { const feeds = d.mk?.control?.feeds ?? [], bad = feeds.filter(f => feedState(f) === 'down'), external = feeds.filter(f => feedState(f) === 'external'), units = Object.entries(d.svc?.units ?? {}).filter(([, v]) => !v.ok); const g = d.svc?.guard;
         const count = bad.length + units.length + (g?.state === 'paused' ? 1 : 0);

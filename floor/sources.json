@@ -120,6 +120,11 @@
    "db": "x",
    "limit": 60,
    "sql": "SELECT m.post_id,m.network_id,m.mint,m.ticker,m.method,m.seen_at,p.author,substr(p.text,1,300) AS text,p.url FROM x_mentions m LEFT JOIN x_posts p ON p.post_id=m.post_id ORDER BY m.seen_at DESC"
+  },
+  "order_reviews": {
+   "db": "ledger",
+   "limit": 60,
+   "sql": "SELECT order_id,role,cause,change,at FROM order_reviews ORDER BY at DESC"
   }
  }
 }

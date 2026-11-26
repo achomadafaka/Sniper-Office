@@ -28,7 +28,7 @@
     return {station, agent};
   }
 
-  const SEAT_NAMES = {judge_gpt: 'Judge GPT'};
+  const SEAT_NAMES = {judge_gpt: 'Judge GPT', head: 'Head (Hermes)'};
   const field = value => typeof value === 'string' && value.trim() ? value.trim().replaceAll('_', ' ') : null;
   const line = (...parts) => parts.filter(part => part != null && part !== '').join(' · ');
   const signed = (n, unit) => finite(n) ? (n >= 0 ? '+' : '') + n.toFixed(2) + unit : null;

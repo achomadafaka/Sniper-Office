@@ -69,7 +69,10 @@ def sports(feed, now):
 
 def paper_labs(feed, led, now, pol):
     """The Paper Labs room: the news-call lab (forced picks, control arm), every book's positions by lane with live PnL, and the strategy results."""
-    return dict(as_of=now, news_calls=T.call_scores(feed, led, now), books=trading(feed, led, now, pol), strategies=ST.results(led)['totals_by_lane'],
+    trackers = [dict(r) for r in feed.execute('SELECT handle,title,total,pace,end_ts FROM mk_pm_trackers WHERE active=1 ORDER BY end_ts LIMIT 12')]
+    rule = dict(temperature=feed.execute("SELECT COUNT(*) FROM mk_pm_markets WHERE closed=0 AND question LIKE '%temperature%'").fetchone()[0],
+                posts=feed.execute("SELECT COUNT(*) FROM mk_pm_markets WHERE closed=0 AND (question LIKE '%tweet%' OR question LIKE '%post%')").fetchone()[0], trackers=trackers)
+    return dict(as_of=now, news_calls=T.call_scores(feed, led, now), books=trading(feed, led, now, pol), strategies=ST.results(led)['totals_by_lane'], rule_markets=rule,
                 not_ported='algorithm lab (runs seat-written code in a jail), post-count lane (needs a post counter source), auto-fire lane (needs the source desk\'s rule feed)')
 
 
@@ -79,7 +82,9 @@ def explorer(feed, led, now):
 
 def coach(led):
     return dict(lessons=[dict(r) for r in led.execute('SELECT * FROM bk_lessons ORDER BY id DESC LIMIT 60')], skills=[dict(r) for r in led.execute('SELECT * FROM bk_skills ORDER BY id DESC LIMIT 100')],
-                reviews=[dict(r) for r in led.execute('SELECT * FROM bk_reviews ORDER BY id DESC LIMIT 20')])
+                reviews=[dict(r) for r in led.execute('SELECT * FROM bk_reviews ORDER BY id DESC LIMIT 20')],
+                retired=[dict(r) for r in led.execute('SELECT strategy_id,lane,retired_at,stats_json FROM bk_strategies WHERE retired_at IS NOT NULL ORDER BY retired_at DESC LIMIT 20')],
+                halts=[dict(r) for r in led.execute("SELECT book_id,kind,at,detail_json FROM bk_events WHERE kind IN ('halt','resume','strategy_retired') ORDER BY id DESC LIMIT 20")])
 
 
 def video_lab(led):
