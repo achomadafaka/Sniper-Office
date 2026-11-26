@@ -22,6 +22,9 @@
   };
   const ageOf = s => fin(s) ? (s < 60 ? Math.floor(s) + ' s' : s < 3600 ? Math.floor(s / 60) + ' min' : Math.floor(s / 3600) + ' h') : null;
   const nameOf = seat => window.OfficeFloor.seatName(seat);
+  const pts = x => (x >= 0 ? '+' : '') + x.toFixed(1);
+  const mark = m => !m ? null : m.state === 'pending' ? 'waiting' : m.state === 'censored' ? 'no price' : fin(m.call_pp) ? pts(m.call_pp) + ' pp' + (fin(m.control_pp) ? ' (control ' + pts(m.control_pp) + ')' : '') : m.state;
+  const CALL_COLS = [['When', r => when(r.at)], ['By', r => nameOf(r.role)], ['Market', r => short(r.question, 90)], ['Side', r => r.side], ['Entry ask', r => cents(r.entry_ask)], ['Expected', r => fin(r.expected_move_cents) ? '+' + r.expected_move_cents + '¢ in ' + r.horizon : r.horizon], ['15 min', r => mark(r.marks?.['15m'])], ['1 h', r => mark(r.marks?.['1h'])], ['6 h', r => mark(r.marks?.['6h'])], ['24 h', r => mark(r.marks?.['24h'])], ['Resolved', r => fin(r.resolved_pp) ? r.resolved_pp.toFixed(1) + ' pp' : null]];
   const colored = (value, n) => { const s = el('span', value ?? 'unknown'); if (tone(n)) s.className = tone(n); return s; };
   const getJson = async url => { try { const r = await fetch(url, {cache: 'no-store'}); return r.ok ? await r.json() : null; } catch { return null; } };
   const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -252,7 +255,7 @@
       T('Stories', n.wire, [['When', r => when(r.fetched_at)], ['Source', r => r.source], ['Story', r => short(r.title, 200)], ['Routed to', r => r.routes.map(x => x.room + ' ' + Math.round(x.score)).join(', ') || 'not routed'], ['Also from', r => r.also_from?.length ? r.also_from.join(', ') : null]],
         'No stories fetched yet.', r => r.news_id),
       section('Debates', ...(debated.length ? debated.map(([id, turns]) => { const box = block(el('h4', short(titleOf(id), 120))); for (const t of turns) box.append(line(nameOf(t.role), t.stance, short(t.text, 400), ageText(t.at))); return box; }) : [el('p', 'No story debates recorded yet.')])),
-      T('News calls (forced picks with a control arm)', n.news_calls, [['Call', r => r.call_id], ['Side', r => r.side], ['Entry ask', r => cents(r.entry_ask)], ['Horizon', r => r.horizon], ['Marks', r => flat(r.marks)], ['Resolved', r => fin(r.resolved_pp) ? r.resolved_pp.toFixed(1) + ' pp' : null]], 'No news calls yet.'),
+      T('News calls (forced picks with a control arm)', n.news_calls, CALL_COLS, 'No news calls yet.'),
       T('Calls on stories (open positions naming a story)', n.calls, [['Market', r => r.label ?? r.instrument], ['Side', r => r.side], ['Entry', r => px(r.entry_price)], ['Live', r => r.live?.state === 'unknown' ? 'unpriced' : money(r.live?.value)], ['Unrealized', r => colored(usd(r.live?.unrealized), r.live?.unrealized)], ['Lane', r => r.lane]], 'No open position names a story.'),
       T('Feeds', n.feeds, [['Feed', r => r.feed], ['Age', r => ageOf(r.age_s)], ['OK', r => feedState(r) === 'ok' ? 'yes' : feedState(r) === 'external' ? 'external block' : 'NO'], ['Detail', r => feedLabel(r) ?? short(r.detail, 100)]], 'No feed has reported.'),
     ];
@@ -287,7 +290,7 @@
     const p = d.mk?.paper_labs;
     if (!p) return [noMarkets(d)];
     return [
-      T('News-call lab', p.news_calls, [['Call', r => r.call_id], ['Side', r => r.side], ['Entry ask', r => cents(r.entry_ask)], ['Horizon', r => r.horizon], ['15 min', r => flat(r.marks?.['15m'])], ['1 h', r => flat(r.marks?.['1h'])], ['6 h', r => flat(r.marks?.['6h'])], ['24 h', r => flat(r.marks?.['24h'])], ['Resolved', r => fin(r.resolved_pp) ? r.resolved_pp.toFixed(1) + ' pp' : null]], 'No news call has been made yet.'),
+      T('News-call lab', p.news_calls, CALL_COLS, 'No news call has been made yet.'),
       bookTable('Books (live)', p.books),
       T('Strategy totals by lane', Object.entries(p.strategies ?? {}), [['Lane', ([k]) => k], ['Totals', ([, v]) => flat(v)]], 'No strategy results yet.'),
       section('Not ported', el('p', p.not_ported)),
