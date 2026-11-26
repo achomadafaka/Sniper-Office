@@ -104,18 +104,30 @@ CREATE TABLE IF NOT EXISTS bk_positions(pos_id TEXT PRIMARY KEY,book_id TEXT NOT
 CREATE INDEX IF NOT EXISTS bk_positions_book ON bk_positions(book_id,status);
 CREATE TABLE IF NOT EXISTS bk_events(id INTEGER PRIMARY KEY AUTOINCREMENT,book_id TEXT,pos_id TEXT,at REAL NOT NULL,kind TEXT NOT NULL,detail_json TEXT);
 CREATE TABLE IF NOT EXISTS bk_strategies(strategy_id TEXT PRIMARY KEY,lane TEXT NOT NULL,owner_role TEXT NOT NULL,hypothesis TEXT,entry_rule TEXT,exit_rule TEXT,kill_criterion TEXT,
-  expected_triggers_per_day REAL,status TEXT NOT NULL,created_at REAL NOT NULL);
+  expected_triggers_per_day REAL,status TEXT NOT NULL,created_at REAL NOT NULL,min_n INTEGER,kill_mean_lt REAL,kill_winrate_lt REAL,retired_at REAL,stats_json TEXT);
 CREATE TABLE IF NOT EXISTS bk_debates(id INTEGER PRIMARY KEY AUTOINCREMENT,news_id TEXT NOT NULL,role TEXT NOT NULL,stance TEXT,text TEXT NOT NULL,at REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS bk_calls(call_id TEXT PRIMARY KEY,news_id TEXT,role TEXT NOT NULL,condition_id TEXT NOT NULL,question TEXT,token_id TEXT NOT NULL,side TEXT NOT NULL,entry_ask REAL,
   entry_fee REAL,control_token TEXT,control_ask REAL,control_fee REAL,expected_move_cents REAL,horizon TEXT,confidence INTEGER,mechanism TEXT,reason TEXT,at REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS bk_explorer(id INTEGER PRIMARY KEY AUTOINCREMENT,role TEXT NOT NULL,at REAL NOT NULL,topic TEXT,why_this TEXT,notebook TEXT);
 CREATE TABLE IF NOT EXISTS bk_leads(id INTEGER PRIMARY KEY AUTOINCREMENT,note_id INTEGER NOT NULL,condition_id TEXT NOT NULL,token_id TEXT,side TEXT,price_at REAL,note TEXT,at REAL NOT NULL);
-CREATE TABLE IF NOT EXISTS bk_lessons(id INTEGER PRIMARY KEY AUTOINCREMENT,role TEXT NOT NULL,by_role TEXT NOT NULL,at REAL NOT NULL,pos_id TEXT,lesson TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS bk_lessons(id INTEGER PRIMARY KEY AUTOINCREMENT,role TEXT NOT NULL,by_role TEXT NOT NULL,at REAL NOT NULL,pos_id TEXT,lesson TEXT NOT NULL,cause TEXT,change TEXT);
 CREATE TABLE IF NOT EXISTS bk_skills(id INTEGER PRIMARY KEY AUTOINCREMENT,skill TEXT NOT NULL,by_role TEXT NOT NULL,at REAL NOT NULL,steps TEXT NOT NULL,why TEXT);
 CREATE TABLE IF NOT EXISTS bk_reviews(id INTEGER PRIMARY KEY AUTOINCREMENT,by_role TEXT NOT NULL,at REAL NOT NULL,review TEXT NOT NULL,priorities TEXT);
 CREATE TABLE IF NOT EXISTS bk_video_rules(rule_id TEXT PRIMARY KEY,role TEXT NOT NULL,source_url TEXT,title TEXT,rule_text TEXT NOT NULL,instrument TEXT,status TEXT NOT NULL,backtest_json TEXT,at REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS bk_operator_chat(id INTEGER PRIMARY KEY AUTOINCREMENT,at REAL NOT NULL,sender TEXT NOT NULL,to_role TEXT,text TEXT NOT NULL);
 '''
+
+
+ADDED_COLUMNS = (('bk_strategies', 'min_n', 'INTEGER'), ('bk_strategies', 'kill_mean_lt', 'REAL'), ('bk_strategies', 'kill_winrate_lt', 'REAL'), ('bk_strategies', 'retired_at', 'REAL'), ('bk_strategies', 'stats_json', 'TEXT'),
+                 ('bk_lessons', 'pos_id', 'TEXT'), ('bk_lessons', 'cause', 'TEXT'), ('bk_lessons', 'change', 'TEXT'))
+
+
+def migrate(conn):
+    """Additive: a ledger made before a column existed gets it; a table this schema does not have (the feed db) is skipped."""
+    for table, col, typ in ADDED_COLUMNS:
+        have = [r[1] for r in conn.execute('PRAGMA table_info(%s)' % table)]
+        if have and col not in have:
+            conn.execute('ALTER TABLE %s ADD COLUMN %s %s' % (table, col, typ))
 
 
 def connect(path, schema):
@@ -128,6 +140,7 @@ def connect(path, schema):
         conn.execute('PRAGMA journal_mode=WAL')
     conn.execute('PRAGMA busy_timeout=10000')
     conn.executescript(schema)
+    migrate(conn)
     return conn
 
 

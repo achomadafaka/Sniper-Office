@@ -11,7 +11,7 @@ POL = B.policy()
 
 
 def pm_order(led, feed, **kw):
-    args = dict(condition_id=COND, side='YES', usd=100.0, tp_price=0.7, sl_price=0.3, **PLAN)
+    args = dict(condition_id=COND, side='YES', usd=100.0, tp_price=0.7, sl_price=0.3, strategy='pm-news-scalp', **PLAN)
     return B.place(led, feed, 'pm-x', 'polymarket', {**args, **kw}, NOW, POL)
 
 
@@ -37,7 +37,7 @@ def test_pm_buys_no_at_the_no_ask(dbs):
 
 @pytest.mark.parametrize('kw,reason', [
     (dict(thesis=''), 'plan_missing'), (dict(side='MAYBE'), 'side_must_be_YES_or_NO'), (dict(tp_price=0.4), 'order_fields'), (dict(sl_price=0.6), 'order_fields'),
-    (dict(condition_id='0xnope'), 'market_unknown'), (dict(usd=0), 'order_fields'), (dict(usd=300.0), 'margin_above_cap'), (dict(strategy='no-such'), 'strategy_unknown')])
+    (dict(condition_id='0xnope'), 'market_unknown'), (dict(usd=0), 'order_fields'), (dict(usd=300.0), 'margin_above_cap'), (dict(strategy='no-such'), 'strategy_unregistered'), (dict(strategy='none fits'), 'strategy_unregistered'), (dict(strategy=None), 'strategy_unregistered')])
 def test_pm_refusals(dbs, kw, reason):
     feed, led, _ = dbs
     put_market(feed); put_quote(feed, YES, 0.48, 0.50, ask_size=5000.)
@@ -124,16 +124,16 @@ def test_max_open_halt_and_cash(dbs):
     feed, led, _ = dbs
     put_market(feed); put_quote(feed, YES, 0.48, 0.50)
     pol = B.policy(dict(max_open=1))
-    assert B.place(led, feed, 'pm-x', 'polymarket', dict(condition_id=COND, side='YES', usd=50, tp_price=.7, sl_price=.3, **PLAN), NOW, pol)['state'] == 'filled'
-    assert B.place(led, feed, 'pm-x', 'polymarket', dict(condition_id=COND, side='YES', usd=50, tp_price=.7, sl_price=.3, **PLAN), NOW, pol)['reason'] == 'max_open'
+    assert B.place(led, feed, 'pm-x', 'polymarket', dict(condition_id=COND, side='YES', usd=50, tp_price=.7, sl_price=.3, strategy='pm-news-scalp', **PLAN), NOW, pol)['state'] == 'filled'
+    assert B.place(led, feed, 'pm-x', 'polymarket', dict(condition_id=COND, side='YES', usd=50, tp_price=.7, sl_price=.3, strategy='pm-news-scalp', **PLAN), NOW, pol)['reason'] == 'max_open'
     led.execute('UPDATE bk_books SET halted=1')
-    assert B.place(led, feed, 'pm-x', 'polymarket', dict(condition_id=COND, side='YES', usd=50, tp_price=.7, sl_price=.3, **PLAN), NOW, B.policy())['reason'] == 'book_halted'
+    assert B.place(led, feed, 'pm-x', 'polymarket', dict(condition_id=COND, side='YES', usd=50, tp_price=.7, sl_price=.3, strategy='pm-news-scalp', **PLAN), NOW, B.policy())['reason'] == 'book_halted'
 
 
 # ---- perps -----------------------------------------------------------------------------------------------------------------
 
 def perp_order(led, feed, **kw):
-    args = dict(coin='BTC', side='long', margin_usd=100.0, leverage=5, tp_pct=5.0, sl_pct=2.0, **PLAN)
+    args = dict(coin='BTC', side='long', margin_usd=100.0, leverage=5, tp_pct=5.0, sl_pct=2.0, strategy='perps-level-break', **PLAN)
     return B.place(led, feed, 'perps-x', 'perps', {**args, **kw}, NOW, POL)
 
 
@@ -213,7 +213,8 @@ def test_perp_stop_target_and_max_hold(dbs):
     perp_order(led, feed)
     put_perp(feed, mid=97.0, at=NOW + 30)
     assert B.engine_tick(led, feed, NOW + 30, POL) == {'stop_loss': 1}
-    perp_order_at = lambda: B.place(led, feed, 'perps-x', 'perps', dict(coin='BTC', side='long', margin_usd=100, leverage=2, tp_pct=5, sl_pct=3, **PLAN), NOW + 40, POL)
+    led.execute("INSERT INTO bk_lessons(role,by_role,at,pos_id,lesson,cause,change) SELECT 'r','r',0,pos_id,'l','c','x' FROM bk_positions")   # the review the gate wants
+    perp_order_at = lambda: B.place(led, feed, 'perps-x', 'perps', dict(coin='BTC', side='long', margin_usd=100, leverage=2, tp_pct=5, sl_pct=3, strategy='perps-level-break', **PLAN), NOW + 40, POL, None, 'r')
     put_perp(feed, mid=100.0, at=NOW + 40); perp_order_at()
     put_perp(feed, mid=100.0, funding=0.0, at=NOW + 40 + 4 * 3600 + 1)
     assert B.engine_tick(led, feed, NOW + 40 + 4 * 3600 + 1, B.policy(dict(quote_max_age_s=1e9))) == {'max_hold': 1}
@@ -230,7 +231,7 @@ def test_perp_unknown_coin_and_bad_fields(dbs):
 # ---- stocks ----------------------------------------------------------------------------------------------------------------
 
 def stock_order(led, feed, now=NOW, **kw):
-    args = dict(symbol='NVDA', side='long', margin_usd=100.0, leverage=3, tp_pct=3.0, sl_pct=1.0, **PLAN)
+    args = dict(symbol='NVDA', side='long', margin_usd=100.0, leverage=3, tp_pct=3.0, sl_pct=1.0, strategy='stock-level-break', **PLAN)
     return B.place(led, feed, 'stocks-x', 'stocks', {**args, **kw}, now, POL)
 
 
@@ -284,7 +285,7 @@ def test_strategy_registry_and_verdicts(dbs):
     from sniper_office.markets import strategies as ST
     put_perp(feed)
     assert perp_order(led, feed, strategy='perps-level-break')['state'] == 'filled'
-    assert perp_order(led, feed, strategy='none fits')['reason'] == 'strategy_reason_required'
+    assert perp_order(led, feed, strategy='none fits')['reason'] == 'strategy_unregistered'
     spec = dict(hypothesis='h', entry_rule='e', exit_rule='x', kill_criterion='k')
     r = ST.register(led, 'perps_trader', 'perps', spec, NOW)
     assert r['state'] == 'registered' and ST.register(led, 'perps_trader', 'perps', spec, NOW)['state'] == 'known'

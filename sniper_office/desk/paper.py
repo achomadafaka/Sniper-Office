@@ -402,6 +402,40 @@ def book_halt(tools, action, reason):
     return out(dict(state=action))
 
 
+REVIEWS = 'CREATE TABLE IF NOT EXISTS order_reviews(order_id TEXT PRIMARY KEY,role TEXT NOT NULL,cause TEXT NOT NULL,change TEXT NOT NULL,at REAL NOT NULL)'
+
+
+def unreviewed_losses(conn, book):
+    """Closed orders of the book with a net loss (exit_usd - spend_usd - costs_usd < 0) and no order_reviews row. A ledger with no order_reviews table yet has no reviews."""
+    has = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='order_reviews'").fetchone()
+    sql = ("SELECT o.order_id,o.mint,o.spend_usd,o.exit_usd,o.costs_usd,o.exit_reason,o.closed_at FROM orders o WHERE o.book_id=? AND o.state='closed' AND o.spend_usd IS NOT NULL AND o.exit_usd IS NOT NULL "
+           "AND o.exit_usd-o.spend_usd-IFNULL(o.costs_usd,0)<0" + (' AND NOT EXISTS(SELECT 1 FROM order_reviews r WHERE r.order_id=o.order_id)' if has else '') + ' ORDER BY o.closed_at LIMIT 10')
+    return [dict(zip(('order_id', 'mint', 'spend_usd', 'exit_usd', 'costs_usd', 'exit_reason', 'closed_at'), r), net_usd=r[3] - r[2] - (r[4] or 0.0)) for r in conn.execute(sql, (book,))]
+
+
+def order_review(tools, order_id, cause, change):
+    """The review that lifts review_pending: what went wrong and what the seat will do differently, on one closed order of its own book. Written to the ledger's order_reviews table (created here when missing)."""
+    if role_of(tools) not in ORDER_ROLES:
+        return refused('role_cannot_review')
+    if type(order_id) is not str or not order_id or len(order_id) > 128 or any(type(v) is not str or not v.strip() or len(v) > 600 for v in (cause, change)):
+        return refused('cause_and_change_required', rule='order_id, cause (what went wrong) and change (what you will do differently): non-empty, at most 600 characters')
+    ledger = path_of(tools, 'ledger_db')
+    if ledger is None:
+        return unknown('ledger_config_unknown')
+    try:
+        with closing(sqlite3.connect(ledger, timeout=5)) as conn, conn:
+            conn.execute(REVIEWS)
+            row = conn.execute('SELECT state FROM orders WHERE order_id=? AND book_id=?', (order_id, book_id(tools))).fetchone()
+            if row is None:
+                return refused('order_not_in_this_book')
+            if row[0] != 'closed':
+                return refused('order_not_closed')
+            known = conn.execute('INSERT OR IGNORE INTO order_reviews VALUES(?,?,?,?,?)', (order_id, role_of(tools), cause.strip(), change.strip(), tools.clock())).rowcount == 0
+    except (OSError, sqlite3.Error):
+        return unknown('ledger_unreadable')
+    return out(dict(state='known' if known else 'recorded', order_id=order_id, note='already reviewed; the first review stands' if known else None))
+
+
 def _rail_refusal(policy, rails):
     for name, value in rails.items():
         bound = (policy.get('rail_bounds') or {}).get(name) if name in SEAT_RAILS else None
@@ -448,6 +482,14 @@ def paper_order(tools, ticket_id, reason, thesis=None, disproof=None, exit_plan=
     with closing(own(tools)) as conn:
         if entry_halt(conn, tools.epoch)['entries_halted']:
             return refused('book_halted')
+    if tools.cfg.get('review_gate', True) and path_of(tools, 'ledger_db') is not None:
+        try:
+            with closing(ro(path_of(tools, 'ledger_db'))) as conn:
+                owed = unreviewed_losses(conn, book_id(tools))
+        except (OSError, sqlite3.Error):
+            return unknown('ledger_unreadable')
+        if owed:
+            return refused('review_pending', unreviewed=owed, next='call order_review for each order_id: cause (what went wrong) and change (what you will do differently); then order again')
     path = path_of(tools, 'desk_db')
     if path is None:
         return unknown('desk_config_unknown')
