@@ -4,12 +4,12 @@ pool into the Office's own desk db, in the schema desk/paper.py reads (table des
     python3 -m sniper_office.desk.feed --config feed.json [--once]
 
 Read-only and keyless by default: https GET/POST to a fixed host allowlist, no redirects, bounded bodies, 429 backoff per host. The optional research RPC (url in an env file named by
-config research_env_file, key MEMECOIN_RESEARCH_HELIUS_RPC_URL) is used for four read-only methods only; its url is never logged or stored.
+config research_env_file, key MEMECOIN_RESEARCH_HELIUS_RPC_URL) is used for six read-only methods only; its url is never logged or stored.
 
 Every check row carries value, source, provider, fetched_at and the provider's claim. A check whose data is unknown is recorded status 'unknown' with a reason, never assumed to pass.
 Verdict, ported from the source project's hard filter (hf2 + intake bounds): a kill on any check => SKIP; an unknown MANDATORY check (market_data, token_safety, sell_probe, liquidity,
-mcap) or an unknown required-collected check (chart, holders) => SKIP; otherwise PASS. Unknown soft checks (cluster, dump_group) never refuse. Dropped, because they need the source
-project's private tape or funding graph: dump_group, cluster, mayhem flag, 60 s chart prints, pumpswap pool-math sell probe (replaced by a public route quote round trip)."""
+mcap) or an unknown required-collected check (chart, holders) => SKIP; otherwise PASS. Unknown soft checks (lp, cluster, dump_group) never refuse; a kill from any of them does. lp and cluster are ported in rugcheck.py (cluster runs last, only when every other check passes).
+Dropped, because they need the source project's private tape: dump_group, mayhem flag, 60 s chart prints, pumpswap pool-math sell probe (replaced by a public route quote round trip)."""
 import argparse
 from contextlib import closing
 import fcntl
@@ -27,16 +27,18 @@ import urllib.request
 from datetime import datetime, timezone
 
 from . import chains as CH
+from . import rugcheck as RC
+from .rugcheck import check
 
 log = logging.getLogger('desk.feed')
 WSOL = 'So11111111111111111111111111111111111111112'
 TOKEN_2022 = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb'
 B58 = re.compile(r'[1-9A-HJ-NP-Za-km-z]{32,44}')
 HOSTS = {'api.dexscreener.com': 'dexscreener', 'api.geckoterminal.com': 'geckoterminal', 'lite-api.jup.ag': 'jupiter'}
-RPC_METHODS = ('getAccountInfo', 'getMultipleAccounts', 'getTokenLargestAccounts', 'getTokenSupply')
+RPC_METHODS = ('getAccountInfo', 'getMultipleAccounts', 'getTokenLargestAccounts', 'getTokenSupply', 'getSignaturesForAddress', 'getTransaction')
 MAX_BODY = 2_000_000
 DEFAULTS = dict(desk_db='desk.db', interval_s=60., max_new_per_cycle=15, retry_unknown_s=300., retention_days=7., max_rows=20000, probe_sol=0.1,
-                mcap_safety=[5000., 50_000_000.], liq_min_quote_sol=10., round_trip_loss_pct_max=8., max_pair_age_s=86400., min_prints_m5=2, min_interval_s=dict(dexscreener=1., geckoterminal=2.5, jupiter=1.2, rpc=0.2))
+                mcap_safety=[5000., 50_000_000.], liq_min_quote_sol=10., round_trip_loss_pct_max=8., max_pair_age_s=86400., min_prints_m5=2, holders_top10_kill_pct=60., cluster_deadline_s=12., cluster_workers=8, min_interval_s=dict(dexscreener=1., geckoterminal=2.5, jupiter=1.2, rpc=0.2))
 SCHEMA = '''
 CREATE TABLE IF NOT EXISTS desk_tickets(id INTEGER PRIMARY KEY, ticket_id TEXT NOT NULL, network_id TEXT NOT NULL, mint TEXT NOT NULL, pool TEXT, stage TEXT NOT NULL, verdict TEXT NOT NULL,
   reason TEXT NOT NULL, ts TEXT NOT NULL, inputs_json TEXT NOT NULL, UNIQUE(ticket_id, stage));
@@ -172,10 +174,6 @@ def discover(net, clock):
 
 # ---- evidence -----------------------------------------------------------------------------------------------------------------------------------------------------------
 
-def check(status, reason, source, fetched_at, **values):
-    return dict(status=status, reason=reason, source=source, fetched_at=fetched_at, **values)
-
-
 def best_pair(doc, mint, chain='solana'):
     """The deepest pair of `mint` on `chain` (DexScreener chainId). Solana pair addresses must be base58; other chains' are any plain address, EVM compared case-insensitively."""
     ok = (lambda a: isinstance(a, str) and B58.fullmatch(a)) if chain == 'solana' else CH.valid_address
@@ -254,7 +252,7 @@ def market_checks(pair, now, cfg, at):
     return checks
 
 
-def token_checks(net, clock, mint, pool):
+def token_checks(net, clock, mint, pool, kill_pct=60.):
     """token_safety (mint + freeze authority, transfer hook) and holders (top 10 share), from the research RPC. No RPC => both unknown."""
     src = 'rpc:getAccountInfo'
     res, why = net.rpc('getAccountInfo', [mint, dict(encoding='jsonParsed')])
@@ -271,10 +269,10 @@ def token_checks(net, clock, mint, pool):
     bad = safety['authority_mint'] == 'open' or safety['authority_freeze'] == 'open' or hooks
     reason = 'mint_authority_open' if safety['authority_mint'] == 'open' else 'freeze_authority_open' if safety['authority_freeze'] == 'open' else 'transfer_hook' if hooks else 'mint_read'
     token = check('kill' if bad else 'pass', reason, src, at, **safety)
-    return dict(token_safety=token, holders=holders_check(net, clock, mint, pool, info))
+    return dict(token_safety=token, holders=holders_check(net, clock, mint, pool, info, kill_pct))
 
 
-def holders_check(net, clock, mint, pool, info):
+def holders_check(net, clock, mint, pool, info, kill_pct=60.):
     src = 'rpc:getTokenLargestAccounts'
     res, why = net.rpc('getTokenLargestAccounts', [mint])
     at = clock()
@@ -283,21 +281,29 @@ def holders_check(net, clock, mint, pool, info):
     if not isinstance(rows, list) or not rows or not supply or supply <= 0:
         return check('unknown', why or 'largest_accounts_unreadable', src, at)
     accounts = [r.get('address') for r in rows[:20] if isinstance(r, dict)]
-    amounts = [num(r.get('amount')) for r in rows[:20] if isinstance(r, dict)]
+    amounts = [int(r['amount']) if isinstance(r.get('amount'), str) and r['amount'].isdigit() else None for r in rows[:20] if isinstance(r, dict)]
     owners, why = net.rpc('getMultipleAccounts', [accounts, dict(encoding='jsonParsed')])
     vals = (owners or {}).get('value') if isinstance(owners, dict) else None
     if not isinstance(vals, list) or len(vals) != len(accounts) or None in amounts:
         return check('unknown', why or 'owners_unreadable', src, at)
-    held = []
-    for amount, v in zip(amounts, vals):
+    who = []
+    for v in vals:
         owner = ((((v or {}).get('data') or {}).get('parsed') or {}).get('info') or {}).get('owner') if isinstance(v, dict) and isinstance(v.get('data'), dict) else None
         if owner is None:
             return check('unknown', 'owner_unresolved', src, at)
-        if owner != pool:    # the pool's own vault is not a holder
-            held.append(amount)
-    top10 = sum(sorted(held, reverse=True)[:10]) / supply * 100.
+        who.append(owner)
+    excluded, why = RC.owner_exclusions(net, [o for o in set(who) if o != pool])    # program-owned (pool and curve authorities) and the incinerator are not holders
+    if excluded is None:
+        return check('unknown', why, 'rpc:getMultipleAccounts', clock())
+    held = {}
+    for owner, amount in zip(who, amounts):
+        if owner != pool and excluded[owner] is None:    # the pool's own vault is not a holder
+            held[owner] = held.get(owner, 0) + amount
+    top10 = sum(sorted(held.values(), reverse=True)[:10]) / supply * 100.
     raw10 = sum(sorted(amounts, reverse=True)[:10]) / supply * 100.     # every account, pool vault included: what a creator-seeded pool looks like
-    return check('pass', 'creator_unresolved', src, at, top10_pct=round(top10, 4), top10_incl_pool_pct=round(raw10, 4), creator_pct=None, exclusions_verified=len(held) < len(accounts), excluded_owner=pool, accounts_read=len(accounts))
+    facts = dict(top10_pct=round(top10, 4), top10_incl_pool_pct=round(raw10, 4), creator_pct=None, exclusions_verified=len(held) < len(accounts), excluded_owner=pool, accounts_read=len(accounts),
+                 excluded_program_owned=sorted(o for o, e in excluded.items() if e), _book=held)    # _book: the wallet book for the cluster check, removed by the collector
+    return check('kill' if top10 >= kill_pct else 'pass', 'top10_concentrated' if top10 >= kill_pct else 'creator_unresolved', src, at, **facts)
 
 
 def sell_probe(net, clock, mint, probe_sol):
@@ -378,12 +384,17 @@ class Feed:
         pool = pair['pairAddress']
         checks = market_checks(pair, now, self.cfg, at)
         market = dict(snapshot(pair, now), source='dexscreener:pairs', fetched_at=at, note='provider claim at decision time')
-        checks.update(token_checks(self.net, self.clock, mint, pool))
+        checks.update(token_checks(self.net, self.clock, mint, pool, self.cfg['holders_top10_kill_pct']))
+        book = checks['holders'].pop('_book', None)
         checks['sell_probe'] = sell_probe(self.net, self.clock, mint, self.cfg['probe_sol'])
         checks['pool_origin'] = pool_origin(pair, mint, checks['holders'], at)
-        checks['cluster'] = check('unknown', 'not_collected_here', 'none', at)
+        checks['lp'] = RC.lp_check(self.net, self.clock, pair, mint, pool)
         checks['dump_group'] = check('unknown', 'not_collected_here', 'none', at)
+        checks['cluster'] = check('unknown', 'not_run_other_check_failed', 'none', at)
         v, reason = verdict(checks, self.cfg)
+        if v == 'PASS' and book:     # ~2 rpc calls per wallet: only for a coin everything else already passes
+            checks['cluster'] = RC.cluster_check(self.net, self.clock, book, self.cfg)
+            v, reason = verdict(checks, self.cfg)
         return self.row(mint, pool, source, claim, now, checks, v, reason, market)
 
     def row(self, mint, pool, source, claim, now, checks, v, reason, market=None):

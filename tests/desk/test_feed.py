@@ -1,4 +1,5 @@
 """The desk feed collector: one ticket per pool, unknown checks recorded as unknown, kills and unknowns refuse, a fresh ticket reaches feed_list end to end, retention bounds the db."""
+import base64
 import json
 import sqlite3
 import sys
@@ -10,8 +11,12 @@ sys.path.insert(0, str(Path(__file__).parent))
 from test_desk_plugin import NOW, call, desk, seat  # noqa: E402
 
 from sniper_office.desk import feed as F  # noqa: E402
+from sniper_office.desk import rugcheck as RC  # noqa: E402
+from sniper_office.desk.onchain import b58  # noqa: E402
 
-MINT, POOL, HOLDER = 'MintAAAA' + '1' * 34, 'PooBBBB' + '2' * 35, 'HodCCCC' + '3' * 35
+addr = lambda n: b58(bytes([n]) * 32)      # a real 32-byte address per number
+MINT, POOL, HOLDER = addr(7), 'PooBBBB' + '2' * 35, 'HodCCCC' + '3' * 35
+LP_MINT, CREATOR, LP_ACCT = addr(11), addr(12), addr(13)
 RPC = 'https://rpc.example.test/?api-key=SECRETKEY'
 SECRET = 'SECRETKEY'
 
@@ -22,9 +27,18 @@ class World:
         self.liq_sol, self.mcap, self.m5, self.mint_auth, self.freeze_auth, self.hook = 40., 200_000., dict(buys=10, sells=8), None, None, None
         self.created_ms, self.loss_back, self.down, self.calls, self.status = (NOW - 120) * 1000, 99_000_000, False, [], {}
         self.whale = 30
+        self.lp_supply, self.lp_owner, self.lp_creator_ok, self.programs, self.funder, self.extra = 0, addr(99), True, {}, lambda owner: None, []
+        self.pool_dex = 'pumpswap'
+
+    def book(self):
+        return [('vault', POOL, 500000), ('h1', HOLDER, self.whale * 10000)] + self.extra     # (token account, owner, atomic amount)
+
+    def pool_account(self):
+        raw = bytes(11) + bytes(RC._decode(CREATOR)) + bytes(RC._decode(MINT)) + bytes(RC._decode(F.WSOL)) + bytes(RC._decode(LP_MINT)) + bytes(64) + bytes(8)
+        return dict(owner=RC.PUMP_AMM, data=[base64.b64encode(raw).decode(), 'base64'])
 
     def pair(self):
-        return dict(chainId='solana', pairAddress=POOL, dexId='pumpswap', baseToken=dict(address=MINT), quoteToken=dict(address=F.WSOL), priceUsd='0.0001', marketCap=self.mcap, fdv=self.mcap,
+        return dict(chainId='solana', pairAddress=POOL, dexId=self.pool_dex, baseToken=dict(address=MINT), quoteToken=dict(address=F.WSOL), priceUsd='0.0001', marketCap=self.mcap, fdv=self.mcap,
                     pairCreatedAt=self.created_ms, liquidity=dict(usd=self.liq_sol * 150, base=1e6, quote=self.liq_sol), txns=dict(m5=self.m5))
 
     def __call__(self, url, body=None):
@@ -46,15 +60,33 @@ class World:
             return 200, dict(outAmount=str(self.loss_back), priceImpactPct='0.2'), None
         if kind == 'rpc':
             m = body['method']
+            ps = body['params']
             if m == 'getAccountInfo':
+                if ps[0] == POOL:
+                    return 200, dict(result=dict(context=dict(slot=9), value=self.pool_account())), None
+                if ps[0] == LP_ACCT:
+                    return 200, dict(result=dict(context=dict(slot=9), value=dict(owner='Tokenkeg', data=dict(parsed=dict(info=dict(owner=self.lp_owner)))))), None
                 return 200, dict(result=dict(context=dict(slot=9), value=dict(owner=F.TOKEN_2022 if self.hook else 'Tokenkeg', data=dict(parsed=dict(info=dict(
                     mintAuthority=self.mint_auth, freezeAuthority=self.freeze_auth, supply='1000000', decimals=6,
                     extensions=[dict(extension='transferHook', state=dict(programId=self.hook))] if self.hook else [])))))), None
+            if m == 'getTokenSupply':
+                return 200, dict(result=dict(context=dict(slot=9), value=dict(amount=str(self.lp_supply)))), None
             if m == 'getTokenLargestAccounts':
-                return 200, dict(result=dict(value=[dict(address='vault', amount='500000'), dict(address='h1', amount=str(self.whale * 10000))])), None
+                if ps[0] == LP_MINT:
+                    return 200, dict(result=dict(value=[dict(address=LP_ACCT, amount=str(self.lp_supply))])), None
+                return 200, dict(result=dict(value=[dict(address=a, amount=str(n)) for a, _, n in self.book()])), None
             if m == 'getMultipleAccounts':
-                own = lambda o: dict(data=dict(parsed=dict(info=dict(owner=o))))
-                return 200, dict(result=dict(value=[own(POOL), own(HOLDER)])), None
+                if ps[0] == [a for a, _, _ in self.book()]:
+                    return 200, dict(result=dict(value=[dict(data=dict(parsed=dict(info=dict(owner=o)))) for _, o, _ in self.book()])), None
+                program = lambda o: RC.PUMP_AMM if o == POOL else self.programs.get(o, RC.SYSTEM_PROGRAM)
+                return 200, dict(result=dict(value=[None if self.programs.get(o, 1) is None else dict(owner=program(o)) for o in ps[0]])), None
+            if m == 'getSignaturesForAddress':
+                return 200, dict(result=[dict(signature='sig-' + ps[0], err=None)]), None
+            if m == 'getTransaction':
+                owner = ps[0][4:]
+                src = self.funder(owner)
+                ix = [dict(parsed=dict(type='transfer', info=dict(source=src, destination=owner, lamports=5)))] if src else []
+                return 200, dict(result=dict(meta=dict(err=None, innerInstructions=[]), transaction=dict(message=dict(instructions=ix)))), None
         return 404, None, None
 
 
@@ -87,7 +119,7 @@ def test_a_passing_pool_gets_one_ticket_with_sourced_checks_and_feed_list_sees_i
     for name, row in checks.items():
         assert row['status'] in ('pass', 'kill', 'unknown') and row['source'] and row['fetched_at'] == NOW, name
     assert checks['holders']['top10_pct'] == 30. and checks['holders']['exclusions_verified'] is True and checks['sell_probe']['round_trip_loss_pct'] == 1.
-    assert checks['cluster']['status'] == 'unknown' and checks['market_data']['provider_claim']['pairAddress'] == POOL
+    assert checks['cluster']['status'] == 'pass' and checks['lp']['reason'] == 'lp_burned' and checks['market_data']['provider_claim']['pairAddress'] == POOL
     assert SECRET not in blob and F.rpc_url_from(feed.cfg['research_env_file']) == RPC
     seat_tools = seat(tmp, monkeypatch, cfg=dict(desk_db=feed.cfg['desk_db']))
     error, doc = call(seat_tools, 'feed_list')
