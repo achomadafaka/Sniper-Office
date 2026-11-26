@@ -16,6 +16,19 @@ WSOL = 'So11111111111111111111111111111111111111112'
 PUMP_AMM = 'pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA'
 SYSTEM_PROGRAM = '11111111111111111111111111111111'
 INCINERATOR = '1nc1nerator11111111111111111111111111111111'
+POOL_PROGRAMS = frozenset({
+    'pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA',   # PumpSwap AMM
+    '6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P',   # pump.fun bonding curve
+    'LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo',   # Meteora DLMM
+    'cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG',   # Meteora DAMM v2
+    'Eo7WjKq67rjJQSZxS6z3YkapzY3eMj6Xy8X5EQVn5UaB',  # Meteora dynamic AMM
+    'dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN',   # Meteora dynamic bonding curve
+    '675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8',  # Raydium AMM v4
+    'CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C',  # Raydium CPMM
+    'CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK',  # Raydium CLMM
+    'LanMV9sAd7wArD4vJFi2qDdfnVhFxYSUg6eADduJ3uj',   # Raydium LaunchLab (Bonk)
+    'whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc',   # Orca Whirlpool
+})
 POOL_KEYS_AT = 11      # discriminator 8, bump 1, index 2; then creator, base mint, quote mint, lp mint, two vaults, lp_supply u64
 MAX_PAGES = 2          # signature pages per funder trace: an owner with more than 1000 * MAX_PAGES signatures is 'deep', unresolved
 KNOWN_FUNDERS_PATH = Path(__file__).with_name('cluster_known_funders.json')
@@ -128,7 +141,9 @@ def owner_exclusions(net, owners):
                     return None, 'owner_program_unknown'
                 out[owner] = None
             elif isinstance(v, dict) and isinstance(v.get('owner'), str) and v['owner']:
-                out[owner] = None if v['owner'] == SYSTEM_PROGRAM else 'program_account:' + v['owner']
+                # Only a PDA (off-curve) of a vetted pool or launchpad program is a vault or curve. A key that can sign stays a holder whatever program owns its
+                # account, and a PDA of any other program (a locker, a creator's own program) is held supply too: excluding it would hide concentration.
+                out[owner] = 'program_account:' + v['owner'] if v['owner'] in POOL_PROGRAMS and on_curve(owner) is False else None
             else:
                 return None, 'owner_program_unknown'
     return out, None

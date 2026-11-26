@@ -101,9 +101,14 @@ def test_lp_burned_needs_two_calls_and_an_outstanding_lp_five():
 
 def test_owner_exclusions_remove_program_accounts_and_the_incinerator_and_refuse_to_guess():
     wallet, pda = 'EhQSwvZvNZjzjPPVB3z9WZkPkvqg398nVJoHZV24MyFB', '8aedJXfFLMytBaukyaLqCyhXCaVe3HGrDYZvsYgadg4V'
-    net = Net(getMultipleAccounts=lambda p: dict(value=[dict(owner=RC.SYSTEM_PROGRAM) if o == wallet else dict(owner='SomeProgram') for o in p[0]]))
+    amm = 'pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA'
+    net = Net(getMultipleAccounts=lambda p: dict(value=[dict(owner=RC.SYSTEM_PROGRAM) if o == wallet else dict(owner=amm) for o in p[0]]))
     out, why = RC.owner_exclusions(net, [wallet, pda, RC.INCINERATOR])
-    assert out == {wallet: None, pda: 'program_account:SomeProgram', RC.INCINERATOR: 'incinerator'} and why is None
+    assert out == {wallet: None, pda: 'program_account:' + amm, RC.INCINERATOR: 'incinerator'} and why is None
+    signer = Net(getMultipleAccounts=lambda p: dict(value=[dict(owner=amm) for _ in p[0]]))
+    assert RC.owner_exclusions(signer, [wallet])[0] == {wallet: None}                    # a key that can sign is a holder whatever program owns its account
+    other = Net(getMultipleAccounts=lambda p: dict(value=[dict(owner='SomeProgram') for _ in p[0]]))
+    assert RC.owner_exclusions(other, [pda])[0] == {pda: None}                          # a PDA of an unvetted program (a locker, the creator's own) is held supply
     nothing = Net(getMultipleAccounts=lambda p: dict(value=[None] * len(p[0])))
     assert RC.owner_exclusions(nothing, [wallet]) == ({wallet: None}, None)             # no account, on the curve: a wallet
     assert RC.owner_exclusions(nothing, [pda]) == (None, 'owner_program_unknown')       # no account, off the curve: cannot tell
@@ -269,7 +274,8 @@ def test_wallet_only_top10_at_the_limit_kills_and_the_limit_is_configurable(rig)
 
 def test_program_owned_and_burned_balances_are_not_holders_but_stay_in_the_pool_figure(rig):
     world, make, t, _ = rig
-    world.extra, world.programs = [('curve', addr(50), 100000), ('burn', RC.INCINERATOR, 50000)], {addr(50): 'SomeProgram'}
+    curve = '8aedJXfFLMytBaukyaLqCyhXCaVe3HGrDYZvsYgadg4V'                                 # off-curve, owned by a vetted pool program
+    world.extra, world.programs = [('curve', curve, 100000), ('burn', RC.INCINERATOR, 50000)], {curve: 'pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA'}
     world.whale = 30
     feed = make()
     feed.cycle()
