@@ -55,6 +55,7 @@ def prune_sessions(state_dir,*,current=None):
 def session_exists(state_dir,session_id,*,family='claude'):
     """False only on a clean search that found nothing. Anything else raises: a failed read must not throw away a live session."""
     if family=='hermes':   # Hermes keeps sessions in its state database, not one file per session: a present database is a resumable session
+        if _as_office('test','-d',str(Path(state_dir)/'.hermes')).returncode:return False    # no Hermes home yet (a seat moved from another harness): nothing to resume
         tree,name='.hermes','*.db'
     else:tree,name=('.codex/sessions','*'+session_id+'.jsonl') if family=='codex' else ('.claude/projects',session_id+'.jsonl')
     done=_as_office('find',str(Path(state_dir)/tree),'-name',name)

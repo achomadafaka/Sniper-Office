@@ -27,3 +27,14 @@ def test_write_home_has_fake_token_mcp_bridge_and_soul(tmp_path):
     cfg = json.loads((tmp_path / 'config.yaml').read_text())
     assert cfg['model'] == dict(default='gpt-x', provider='openai-codex') and cfg['mcp_servers']['office']['args'][0] == '-c'
     assert (tmp_path / 'SOUL.md').read_text() == 'You coordinate.' and oct((tmp_path / 'auth.json').stat().st_mode)[-3:] == '600'
+
+
+def test_hermes_session_absent_without_a_hermes_home(monkeypatch, tmp_path):
+    from sniper_office import seat_retention as R
+    import subprocess
+    calls = []
+    def fake(*argv):
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 1 if argv[0] == 'test' else 0, stdout='')
+    monkeypatch.setattr(R, '_as_office', fake)
+    assert R.session_exists(str(tmp_path), 'old-codex-thread', family='hermes') is False and [c[0] for c in calls] == ['test']
