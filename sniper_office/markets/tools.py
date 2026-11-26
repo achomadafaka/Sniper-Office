@@ -305,6 +305,20 @@ def sports_games(tools, feed, led, pol, role, now, league=None, limit=30):
 
 
 @guarded
+def pm_trackers(tools, feed, led, pol, role, now, handle=None, hours=48):
+    """Post-count windows (Polymarket's tracker, the resolution source of the post-count markets): open windows with running total, pace and recent hourly counts; closed windows with their final count."""
+    rows = feed.execute('SELECT * FROM mk_pm_trackers WHERE (? IS NULL OR handle=?) ORDER BY active DESC, end_ts DESC LIMIT 80', (handle, handle)).fetchall()
+    keep = max(0, min(int(hours or 48), 240))
+    def one(r):
+        d = dict(tracking_id=r['tracking_id'], handle=r['handle'], title=r['title'], start_ts=r['start_ts'], end_ts=r['end_ts'], active=bool(r['active']), total=r['total'], age_s=age(now, r['fetched_at']), market_link=r['market_link'])
+        if r['active']:
+            d.update(pace=r['pace'], hours_left=round((r['end_ts'] - now) / 3600, 1) if r['end_ts'] else None, hourly=json.loads(r['hourly_json'] or '[]')[-keep:] if keep else [])
+        return d
+    return out(dict(state='known' if rows else 'unknown', feed=health(feed, 'polymarket', now), windows=[one(r) for r in rows],
+                    note='pace is the tracker\'s own projection of the final count. Read the market rules for what counts as a post before trusting any count.'))
+
+
+@guarded
 def news_call(tools, feed, led, pol, role, now, condition_id, side, expected_move_cents, horizon, confidence, mechanism, reason, news_id=None):
     """A forced paper pick on a headline (the source desk's news-call lab): no abstain, no order, no cash. Filled at the fetched ask of the called token and of the opposite side as control; scored later at 15m, 1h, 6h, 24h on stored bids."""
     m = feed.execute('SELECT * FROM mk_pm_markets WHERE condition_id=?', (condition_id,)).fetchone()
@@ -468,6 +482,8 @@ TOOLS = (
                  ('polymarket', 'news_call', 'Forced paper pick on a headline (no abstain, no cash): the market, side, expected_move_cents, horizon (15m|1h|6h|24h|resolution), confidence 1-5, mechanism, one-line reason. Scored later against the opposite side as control.',
                   dict(condition_id=S, side=dict(S, enum=['YES', 'NO']), expected_move_cents=N, horizon=S, confidence=N, mechanism=S, reason=S, news_id=S), ['condition_id', 'side', 'expected_move_cents', 'horizon', 'confidence', 'mechanism', 'reason'], news_call),
                  ('polymarket', 'call_scores', 'Scored news calls (yours, or all with mine=false): points at each horizon for the call and its control, and at resolution.', dict(mine={'type': 'boolean'}), [], call_scores_tool),
+                 ('polymarket', 'pm_trackers', 'Post-count windows from Polymarket\'s tracker (resolution source of the "# tweets/posts" markets): open windows with total so far, pace, hours left and recent hourly counts; closed windows with final counts for base rates. Optional handle (elonmusk, realDonaldTrump), hours of hourly counts (default 48).',
+                  dict(handle=S, hours=N), [], pm_trackers),
                  ('polymarket', 'sports_games', 'Today\'s games (ESPN, no key) with the bookmaker line de-vigged to a fair home win probability, and the gap to an open prediction market that names both teams.', dict(league=S, limit=N), [], sports_games)]) +
     _lane_tools('perps', 'perp', dict(coin=S, venue=S, side=dict(S, enum=['long', 'short']), margin_usd=N, leverage=N, tp_pct=N, sl_pct=N, **PLAN),
                 'Paper entry on a perpetual at the newest fetched mid plus slippage, taker fee on notional. Leverage is capped (config, the coin\'s max, and a stop may cost at most half the margin: leverage is cut to fit and the applied value is returned). Needs thesis, disproof, exit_plan, tp_pct, sl_pct (percent of price). Funding accrues, liquidation price is returned; max hold applies.',

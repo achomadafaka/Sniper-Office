@@ -74,6 +74,7 @@ CREATE TABLE IF NOT EXISTS mk_pm_markets(condition_id TEXT PRIMARY KEY,question 
   volume24h REAL,liquidity REAL,closed INTEGER,accepting INTEGER,resolved_yes REAL,rules TEXT,source TEXT NOT NULL,fetched_at REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS mk_pm_quotes(id INTEGER PRIMARY KEY AUTOINCREMENT,token_id TEXT NOT NULL,condition_id TEXT,bid REAL,bid_size REAL,ask REAL,ask_size REAL,source TEXT NOT NULL,fetched_at REAL NOT NULL);
 CREATE INDEX IF NOT EXISTS mk_pm_quotes_token ON mk_pm_quotes(token_id,fetched_at);
+CREATE TABLE IF NOT EXISTS mk_pm_trackers(tracking_id TEXT PRIMARY KEY,handle TEXT,title TEXT,start_ts REAL,end_ts REAL,active INTEGER,total REAL,pace REAL,hourly_json TEXT,market_link TEXT,source TEXT NOT NULL,fetched_at REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS mk_perp_ticks(id INTEGER PRIMARY KEY AUTOINCREMENT,venue TEXT NOT NULL,coin TEXT NOT NULL,mark REAL,mid REAL,oracle REAL,funding REAL,funding_h REAL,oi REAL,day_vol REAL,prev_day REAL,
   max_leverage REAL,source TEXT NOT NULL,fetched_at REAL NOT NULL);
 CREATE INDEX IF NOT EXISTS mk_perp_ticks_coin ON mk_perp_ticks(venue,coin,fetched_at);

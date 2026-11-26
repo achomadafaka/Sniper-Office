@@ -58,6 +58,21 @@ def test_polymarket_tick_pages_gamma_and_dedups(fake, dbs):
     assert offsets == ['0', '100', '200'] and 'markets=1' in detail
 
 
+def test_polymarket_tick_adds_tagged_events_and_tracker_counts(fake, dbs):
+    feed, _, tmp = dbs
+    hot = dict(gamma_market(), conditionId='0xtemp', question='Will the highest temperature in Seoul be 8°C on November 26?', clobTokenIds='["ty","tn"]', bestAsk=0.30, bestBid=0.28, volume24hr=600.0, endDate='2099-01-01T00:00:00Z')
+    dead = dict(hot, conditionId='0xdead', bestAsk=0.001, bestBid=0.0)                   # a bucket outside 3-97 cents: orders refuse it, so the feed skips it
+    fake.routes = {GAMMA + '?active': [gamma_market()], 'https://gamma-api.polymarket.com/events?tag_slug=daily-temperature': [dict(title='Seoul', markets=[hot, dead])],
+                   'https://xtracker.polymarket.com/api/users/elonmusk/trackings': dict(data=[dict(id='w1', title='Elon Musk # tweets', startDate='2026-11-20T17:00:00Z', endDate='2099-01-01T00:00:00Z', isActive=True, marketLink='https://polymarket.com/event/x')]),
+                   'https://xtracker.polymarket.com/api/trackings/w1': dict(data=dict(stats=dict(total=234, pace=273, daily=[dict(date='2026-11-20T17:00:00Z', count=5)]))),
+                   'https://clob.polymarket.com/book?token_id=': book(YES, .48, .50)}
+    detail = PM.tick(dict(markets_db=str(tmp / 'feed.db'), ledger_db=str(tmp / 'ledger.db'), gap_s=0, event_tags=['daily-temperature'], trackers=['elonmusk']), NOW, sleep=lambda s: None)
+    got = {r[0] for r in feed.execute('SELECT condition_id FROM mk_pm_markets')}
+    assert 'markets=2' in detail and got == {COND, '0xtemp'}
+    t = feed.execute('SELECT * FROM mk_pm_trackers').fetchone()
+    assert (t['tracking_id'], t['active'], t['total'], t['pace'], json.loads(t['hourly_json'])) == ('w1', 1, 234, 273, [['2026-11-20T17:00:00Z', 5]])
+
+
 def test_polymarket_tick_gamma_down_raises_and_records(fake, dbs):
     feed, _, tmp = dbs
     fake.routes = {GAMMA: OSError('down')}

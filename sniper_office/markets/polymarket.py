@@ -5,13 +5,16 @@ Fee: the market's own `feeSchedule` when Gamma sends one, else `pm_fee_rate` fro
 import json
 import time
 import urllib.parse
-from datetime import datetime
+from datetime import datetime, timezone
 
 from . import common as C, router as R
 
 GAMMA = 'https://gamma-api.polymarket.com/markets'
+EVENTS = 'https://gamma-api.polymarket.com/events'
 BOOK = 'https://clob.polymarket.com/book?token_id='
-DEFAULTS = dict(top_n=40, min_volume24h=2000.0, max_spread=0.06, min_days_to_end=0.125, pm_fee_rate=0.05, gap_s=0.35, retention_days=7, interval_s=60, pages=1)
+XTRACKER = 'https://xtracker.polymarket.com/api/'
+DEFAULTS = dict(top_n=40, min_volume24h=2000.0, max_spread=0.06, min_days_to_end=0.125, pm_fee_rate=0.05, gap_s=0.35, retention_days=7, interval_s=60, pages=1,
+                event_tags=(), tag_pages=3, tag_top_n=120, tag_min_volume24h=100.0, trackers=(), tracker_history_days=60)
 
 
 def _end(text):
@@ -70,6 +73,46 @@ def _store_market(feed, row, now):
                  [row[c] for c in cols] + [max(room, key=lambda r: room[r]['score']), 'gamma:markets', now])
 
 
+def _tagged(cfg, now, feed, have):
+    """Open markets of events under each `event_tags` slug (rule-driven series: daily temperature, post counts), busiest first, outside the volume-ranked set.
+    Event lists are paged small (one daily-temperature page of 20 is ~1.7 MB). A bucket priced outside 3-97 cents is left out: orders refuse it anyway."""
+    rows = {}
+    stamp = datetime.fromtimestamp(now, timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+    for tag in cfg['event_tags']:
+        for i in range(max(1, int(cfg['tag_pages']))):
+            try:
+                evs = C.get_json('%s?%s' % (EVENTS, urllib.parse.urlencode(dict(tag_slug=tag, closed='false', end_date_min=stamp, order='volume24hr', ascending='false', limit=10, offset=10 * i))))
+            except Exception as exc:
+                C.status(feed, 'polymarket_tags', False, '%s %s: %s' % (tag, type(exc).__name__, str(exc)[:100]), now)
+                break
+            if not isinstance(evs, list) or not evs:
+                break
+            for e in evs:
+                for m in (e.get('markets') or ()) if isinstance(e, dict) else ():
+                    row = parse_market(m, cfg, now)
+                    if row and row['condition_id'] not in have and row['accepting'] and row['end_ts'] and row['end_ts'] > now \
+                            and (row['volume24h'] or 0) >= cfg['tag_min_volume24h'] and row['ask'] is not None and 0.03 <= row['ask'] <= 0.97:
+                        rows[row['condition_id']] = row
+    return sorted(rows.values(), key=lambda r: -(r['volume24h'] or 0))[:int(cfg['tag_top_n'])]
+
+
+def _trackers(cfg, now, feed):
+    """Post-count windows from Polymarket's own tracker (the resolution source of the post-count markets): running total, pace and hourly counts.
+    Active windows refresh every tick; a closed window is stored once with its final count, for base rates."""
+    for handle in cfg['trackers']:
+        try:
+            for t in C.get_json(XTRACKER + 'users/%s/trackings' % urllib.parse.quote(handle)).get('data') or ():
+                end = _end(t.get('endDate')) or 0
+                if not t.get('isActive') and (end < now - 86400 * cfg['tracker_history_days'] or feed.execute('SELECT 1 FROM mk_pm_trackers WHERE tracking_id=? AND active=0', (t['id'],)).fetchone()):
+                    continue
+                st = (C.get_json(XTRACKER + 'trackings/%s?includeStats=true' % urllib.parse.quote(t['id'])).get('data') or {}).get('stats') or {}
+                hourly = [[d.get('date'), d.get('count')] for d in st.get('daily') or () if isinstance(d, dict)]
+                feed.execute('INSERT OR REPLACE INTO mk_pm_trackers VALUES(?,?,?,?,?,?,?,?,?,?,?,?)', (t['id'], handle, str(t.get('title'))[:200], _end(t.get('startDate')), end, 1 if t.get('isActive') else 0,
+                             C.num(st.get('total')), C.num(st.get('pace')), json.dumps(hourly), str(t.get('marketLink') or '')[:300], 'xtracker', now))
+        except Exception as exc:
+            C.status(feed, 'polymarket_trackers', False, '%s %s: %s' % (handle, type(exc).__name__, str(exc)[:100]), now)
+
+
 def _held(cfg):
     """(condition ids, token ids) of open paper positions, from the ledger when the config names one."""
     if not cfg.get('ledger_db'):
@@ -99,6 +142,8 @@ def tick(cfg, now, sleep=time.sleep):
         C.status(feed, 'polymarket', False, 'gamma %s: %s' % (type(exc).__name__, str(exc)[:120]), now)
         raise
     ranked = list(markets.values())[:cfg['top_n']]
+    ranked += _tagged(cfg, now, feed, {r['condition_id'] for r in ranked})
+    _trackers(cfg, now, feed)
     held_c = [c for c in dict.fromkeys(held_c) if c]
     if held_c:        # held markets by condition id, open and closed (Gamma hides closed ones unless asked): their closed flag and resolution price
         for extra in ('', 'closed=true&'):

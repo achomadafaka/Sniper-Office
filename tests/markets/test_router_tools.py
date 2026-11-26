@@ -93,7 +93,7 @@ def test_tool_groups_and_registration():
     for name, t in h.tools.items():
         groups.setdefault(t.group, []).append(name)
     assert set(groups) == {'polymarket', 'perps', 'stocks', 'news'}
-    for need in ('pm_order', 'pm_exit', 'pm_book', 'pm_markets', 'pm_market', 'perp_order', 'perp_book', 'perp_markets', 'stock_order', 'stock_quotes', 'story_list', 'story_route', 'meme_list'):
+    for need in ('pm_order', 'pm_exit', 'pm_book', 'pm_markets', 'pm_market', 'perp_order', 'perp_book', 'perp_markets', 'stock_order', 'stock_quotes', 'story_list', 'story_route', 'meme_list', 'pm_trackers'):
         assert need in h.tools
     for name in ('pm_order', 'perp_order', 'stock_order'):
         assert {'thesis', 'disproof', 'exit_plan'} <= set(h.tools[name].required) and any(k in h.tools[name].required for k in ('tp_price', 'tp_pct'))
@@ -333,3 +333,12 @@ def test_written_strategies_cover_each_lane_and_the_prompts_name_real_tools():
     for f in (Path(M.__file__).parent / 'prompts').glob('*.md'):
         called = set(re.findall(r'`([a-z_]+)\(', f.read_text()))
         assert called <= names, (f.name, called - names)
+
+
+def test_pm_trackers_tool(dbs):
+    feed, led, tmp = dbs
+    feed.execute("INSERT INTO mk_pm_trackers VALUES('w1','elonmusk','Elon Musk # tweets',?,?,1,234,273,'[[\"a\",5],[\"b\",7]]','l','xtracker',?)", (NOW - 86400, NOW + 7200, NOW - 30))
+    feed.execute("INSERT INTO mk_pm_trackers VALUES('w0','elonmusk','old',?,?,0,410,null,'[]','l','xtracker',?)", (NOW - 9 * 86400, NOW - 2 * 86400, NOW - 99))
+    d, err = call('pm_trackers', FakeTools(tmp), handle='elonmusk', hours=1)
+    assert not err and [w['tracking_id'] for w in d['windows']] == ['w1', 'w0']
+    assert d['windows'][0]['hourly'] == [['b', 7]] and d['windows'][0]['hours_left'] == 2.0 and d['windows'][1]['total'] == 410 and 'pace' not in d['windows'][1]
