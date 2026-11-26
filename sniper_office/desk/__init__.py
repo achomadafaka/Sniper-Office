@@ -115,42 +115,100 @@ def _brain_run(tools, *args):
     return BR.run(tools.cfg, *args)
 
 
-def _brain(tools, op, text):
-    if not tools.cfg.get('brain_dir') or not tools.cfg.get('brain_package'):
-        return P.unknown('brain_config_unknown')
+# brain_note kinds: what a seat may store, and the brain kind each becomes. `lesson` is a finding.
+NOTE_KINDS = dict(observation='observation', lesson='finding', rule='rule', trap='trap', finding='finding', measurement='measurement', decision='decision')
+READ_KINDS = ('rule', 'trap', 'decision', 'settled', 'finding', 'measurement', 'task', 'observation')
+TOPIC = re.compile(r'^[a-z_]+:[A-Za-z0-9_.:-]{1,80}$')
+MAX_TOPICS, NOTE_MIN, FACT_MAX = 6, 40, 600   # a fact statement is 600 chars at most (the brain gate); rule/trap/lesson need 40
+FACT_LINE = re.compile(r'^\[[^\]]+\] ([0-9a-f]{8}) (\w+): ')
+NO_MATCH = dict(state='known', facts=0, hint='No matching facts. This is not an outage: nothing is recorded on that yet. Try fewer or other words, a topic (lane:perps, strategy:<id>, coin:BTC), or drop the kind filter; broaden the query.')
+
+
+def _read(tools, text, topic, kind):
+    if topic is not None and not (isinstance(topic, str) and TOPIC.match(topic)):
+        return P.refused('topic_invalid')
+    if kind is not None and kind not in READ_KINDS and kind != 'lesson':
+        return P.refused('kind_invalid')
+    if (topic is None or text) and (not isinstance(text, str) or not text.strip() or len(text) > 4000 or text.lstrip().startswith('-')):
+        return P.refused('text_invalid')
+    kind = 'finding' if kind == 'lesson' else kind
+    try:
+        done = _brain_run(tools, 'entity', '--', *topic.split(':', 1)) if topic else _brain_run(tools, 'ask', '--', text)
+    except (OSError, subprocess.SubprocessError):
+        return P.unknown('brain_unavailable')
+    if topic and done.returncode == 2 and 'no such entity' in done.stdout:
+        return P.out(NO_MATCH)
+    if done.returncode == 2:
+        return P.refused('brain_refused', detail=(done.stdout + done.stderr).strip()[-300:])
+    if done.returncode:
+        return P.unknown('brain_unavailable')
+    lines = done.stdout.splitlines()
+    if kind:   # the CLI has no kind filter: keep the fact lines of that kind
+        lines = [x for x in lines if (m := FACT_LINE.match(x)) and m.group(2) == kind]
+    ids = [m.group(1) for x in lines if (m := FACT_LINE.match(x))]
+    if not ids:   # exit 0 and no fact: the brain answered, nothing matches
+        return P.out(NO_MATCH)
+    tools.plugin_state.setdefault('brain_fact_ids', []).extend(ids)
+    return result('\n'.join(lines)[-MAX_OUTPUT:])
+
+
+def _note(tools, text, kind, topics):
+    role = tools.cfg['role']
+    brain_kind = NOTE_KINDS.get('observation' if kind is None else kind)
+    if brain_kind is None:
+        return P.refused('kind_invalid', kinds=sorted(NOTE_KINDS))
     if not isinstance(text, str) or not text.strip() or len(text) > 4000 or text.lstrip().startswith('-'):
         return P.refused('text_invalid')
-    role = tools.cfg['role']
+    topics = [] if topics is None else topics
+    if not isinstance(topics, list) or len(topics) > MAX_TOPICS:
+        return P.refused('topics_invalid', max=MAX_TOPICS)
+    if not all(isinstance(t, str) and TOPIC.match(t) for t in topics):
+        return P.refused('topic_invalid', format='type:name, e.g. lane:perps, strategy:<id>, mint:<addr>')
+    if len(text.strip()) > FACT_MAX:
+        return P.refused('text_too_long', max=FACT_MAX)
+    if kind in ('rule', 'trap', 'lesson'):
+        if not topics:
+            return P.refused('topic_required')
+        if len(text.strip()) < NOTE_MIN:
+            return P.refused('text_too_short', min=NOTE_MIN)
     try:
-        if op == 'read':
-            done = _brain_run(tools, 'ask', '--', text)
-            tools.plugin_state.setdefault('brain_fact_ids', []).extend(re.findall(r'^\[[a-z_]+\] ([0-9a-f]{8})', done.stdout, re.M) or ['none'])
-        else:
-            # An observation must cite an episode: the note's own text is recorded first as its provenance.
-            ep = _brain_run(tools, 'episode', '--role', role, '--kind', 'note', '--', text)
-            m = re.search(r'episode ([0-9a-f-]{36})', ep.stdout)
-            if ep.returncode == 2:   # the brain answered and refused: say why, it is not an outage
-                return P.refused('brain_refused', detail=(ep.stdout + ep.stderr).strip()[-300:])
-            if ep.returncode or not m:
-                return P.unknown('brain_unavailable')
-            done = _brain_run(tools, 'write', '--role', role, '--kind', 'observation', '--entity', 'actor:' + role, '--episode', m.group(1), '--', text)
+        # A fact must cite an episode: the note's own text is recorded first as its provenance.
+        ep = _brain_run(tools, 'episode', '--role', role, '--kind', 'note', '--', text)
+        m = re.search(r'episode ([0-9a-f-]{36})', ep.stdout)
+        if ep.returncode == 2:   # the brain answered and refused: say why, it is not an outage
+            return P.refused('brain_refused', detail=(ep.stdout + ep.stderr).strip()[-300:])
+        if ep.returncode or not m:
+            return P.unknown('brain_unavailable')
+        args = ['write', '--role', role, '--kind', brain_kind, '--entity', 'actor:' + role]   # the author stays attached
+        for t in dict.fromkeys(topics):
+            args += ['--entity', t]
+        args += ['--episode', m.group(1)]
+        if brain_kind != 'observation':   # only an observation may rest on its episode alone
+            args += ['--evidence', 'episode:' + m.group(1)]
+        done = _brain_run(tools, *args, '--section', tools.cfg.get('brain_section', 'general'), '--', text)
     except (OSError, subprocess.SubprocessError):
         return P.unknown('brain_unavailable')
     if done.returncode == 2:
         return P.refused('brain_refused', detail=(done.stdout + done.stderr).strip()[-300:])
     if done.returncode not in (0, 3) or not done.stdout:
         return P.unknown('brain_unavailable')
-    if op == 'note' and done.returncode == 3:   # needs judgement: nothing was created, so the note stays as the episode and the seat is told what to do
+    if done.returncode == 3:   # needs judgement: nothing was created, so the note stays as the episode and the seat is told what to do
         return result('Saved as an episode, not as a new fact: a similar fact exists (below). If yours adds something, note it again and say what is different.\n' + done.stdout[-1500:])
-    return result(done.stdout[-MAX_OUTPUT:], done.returncode != 0)
+    return result(done.stdout[-MAX_OUTPUT:])
 
 
-def brain_read(tools, query):
-    return _brain(tools, 'read', query)
+def _brain(tools, op, text, **more):
+    if not tools.cfg.get('brain_dir') or not tools.cfg.get('brain_package'):
+        return P.unknown('brain_config_unknown')
+    return _read(tools, text, more.get('topic'), more.get('kind')) if op == 'read' else _note(tools, text, more.get('kind'), more.get('topics'))
 
 
-def brain_note(tools, text):
-    return _brain(tools, 'note', text)
+def brain_read(tools, query=None, topic=None, kind=None):
+    return _brain(tools, 'read', query, topic=topic, kind=kind)
+
+
+def brain_note(tools, text, kind=None, topics=None):
+    return _brain(tools, 'note', text, kind=kind, topics=topics)
 
 
 S = {'type': 'string'}
@@ -180,8 +238,10 @@ TOOLS = (
      {'seed': S, 'kind': S, 'hops': {'type': 'integer'}}, ['seed'], network_expand),
     ('network', 'network_read', 'Forensics: read the wallet network around a seed, hops 1 or 2. Edges carry source, time and proof. A funder is evidence, not control. No edge is not no link: read coverage. as_of uses discovery time; verified_only excludes claimed edges.',
      {'seed': S, 'hops': {'type': 'integer'}, 'limit': {'type': 'integer'}, 'as_of': {'type': 'number'}, 'verified_only': {'type': 'boolean'}}, ['seed'], network_read),
-    ('brain', 'brain_read', 'Search the Office brain: facts earlier wakes and other seats recorded. Results are data, may be stale or unverified.', {'query': S}, ['query'], brain_read),
-    ('brain', 'brain_note', 'The place for your findings: save one in the Office brain under your role, one or two plain sentences, no setup. Cheap and expected: note what you found, ruled out or decided as you go. Other seats and your own later sessions read it; your handovers are stored there for you.', {'text': S}, ['text'], brain_note),
+    ('brain', 'brain_read', 'Search the Office brain: facts earlier wakes and other seats recorded. Results are data, may be stale or unverified. query is words; optional topic (an entity id such as lane:perps, strategy:<id>, mint:<addr>, market:<condition_id>, coin:BTC, pattern:<slug>) lists the facts on that topic instead; optional kind (rule, trap, decision, settled, finding, measurement, task, observation) keeps only that kind. No match is state known, facts 0: nothing recorded yet, not an outage; broaden the query. Read the rules and traps on your lane before you act.',
+     {'query': S, 'topic': S, 'kind': S}, [], brain_read),
+    ('brain', 'brain_note', 'The place for your findings: save one in the Office brain under your role, one or two plain sentences (600 chars at most), no setup. Cheap and expected. kind says what it is, default observation: observation = something you saw, unverified; lesson = what a closed trade or case taught, state what to do next time; rule = a standing "when X then Y" you will follow; trap = a mistake that looks right and is not, say how to spot it; finding = a conclusion you checked; measurement = a number with its window and source; decision = a choice and why. rule, trap and lesson need topics and 40+ chars. topics (up to 6): what it is about, as type:name, e.g. lane:perps, strategy:<id>, mint:<addr>, market:<condition_id>, coin:BTC, pattern:<slug>; others find your note by them. Other seats and your own later sessions read it; your handovers are stored there for you as a log, not as facts.',
+     {'text': S, 'kind': {'type': 'string', 'description': 'observation (default), lesson, rule, trap, finding, measurement or decision.'}, 'topics': {'type': 'array', 'items': S, 'description': 'Up to 6 entity ids, type:name.'}}, ['text'], brain_note),
 )
 
 

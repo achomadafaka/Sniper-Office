@@ -28,13 +28,12 @@ def calls(log):
     return [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
 
 
-def test_a_handover_is_stored_as_an_episode_and_an_observation_on_the_actor(tmp_path):
+def test_a_handover_is_stored_as_an_episode_only(tmp_path):
     cfg, log = fake_brain(tmp_path)
     s = FakeSeat(tmp_path, role='scout', **cfg)
     BR.on_handover(s, 'Working on mint X. Next: check holders.')
-    ep, obs = calls(log)
+    ep, = calls(log)
     assert ep[:6] == ['episode', '--role', 'scout', '--kind', 'handover', '--'] and ep[6] == 'Working on mint X. Next: check holders.'
-    assert obs[:9] == ['write', '--role', 'scout', '--kind', 'observation', '--entity', 'actor:scout', '--episode', '5392ba90-ec5e-4b72-9915-5f896cb59616']
 
 
 def test_an_unconfigured_or_down_brain_never_raises_or_stores(tmp_path):
@@ -61,7 +60,7 @@ def test_a_closed_order_leaves_one_lesson_episode_even_after_a_restart(tmp_path)
     s2.__dict__.update(s.__dict__, office=sqlite3.connect(tmp_path / 'o.db', isolation_level=None))
     BR.lessons(s2)
     got = calls(log)
-    assert len(got) == 1 and got[0][:6] == ['episode', '--role', 'judge', '--kind', 'report', '--'] and 'c1' in got[0][6] and 'trail' in got[0][6] and 'MINTX' in got[0][6]
+    assert [g[0] for g in got] == ['episode', 'write'] and got[0][:6] == ['episode', '--role', 'judge', '--kind', 'report', '--'] and 'c1' in got[0][6] and 'trail' in got[0][6] and 'MINTX' in got[0][6]
 
 
 def test_a_lesson_is_retried_when_the_brain_was_down(tmp_path):
