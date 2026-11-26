@@ -296,7 +296,8 @@ def holders_check(net, clock, mint, pool, info):
         if owner != pool:    # the pool's own vault is not a holder
             held.append(amount)
     top10 = sum(sorted(held, reverse=True)[:10]) / supply * 100.
-    return check('pass', 'creator_unresolved', src, at, top10_pct=round(top10, 4), creator_pct=None, exclusions_verified=len(held) < len(accounts), excluded_owner=pool, accounts_read=len(accounts))
+    raw10 = sum(sorted(amounts, reverse=True)[:10]) / supply * 100.     # every account, pool vault included: what a creator-seeded pool looks like
+    return check('pass', 'creator_unresolved', src, at, top10_pct=round(top10, 4), top10_incl_pool_pct=round(raw10, 4), creator_pct=None, exclusions_verified=len(held) < len(accounts), excluded_owner=pool, accounts_read=len(accounts))
 
 
 def sell_probe(net, clock, mint, probe_sol):
@@ -324,7 +325,7 @@ def pool_origin(pair, mint, holders, at):
     launch that rugged 4 of 6 paper entries on 2026-11-25/26 (-$96, every one drained within 5 min). Mint suffix is a heuristic, not proof of a burn."""
     dex = str(pair.get('dexId') or '')
     migrated = (dex == 'pumpswap' and mint.endswith('pump')) or (dex == 'raydium' and mint.endswith('bonk'))
-    top10 = holders.get('top10_pct') if holders.get('status') == 'pass' else None
+    top10 = holders.get('top10_incl_pool_pct', holders.get('top10_pct')) if holders.get('status') == 'pass' else None
     if dex == 'meteora' and finite(top10) and top10 >= 90:
         return check('kill', 'creator_seeded_meteora', 'dexscreener:pairs+rpc', at, dex=dex, top10_pct=top10)
     return check('pass', 'launchpad_migrated' if migrated else 'creator_pool', 'dexscreener:pairs', at, dex=dex, lp_burn_likely=migrated)

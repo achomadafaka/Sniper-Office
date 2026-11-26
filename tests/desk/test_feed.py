@@ -199,3 +199,4 @@ def test_pool_origin_kills_creator_seeded_meteora_and_labels_the_rest():
     assert pool_origin(dict(dexId='meteora'), 'Abc', dict(status='unknown'), 1)['status'] == 'pass'      # unknown holders never kill here
     assert pool_origin(dict(dexId='pumpswap'), 'Xpump', held(99.0), 1)['reason'] == 'launchpad_migrated'
     assert pool_origin(dict(dexId='pumpswap'), 'Xbonk', held(5.0), 1)['reason'] == 'creator_pool'
+    assert pool_origin(dict(dexId='meteora'), 'Abc', dict(status='pass', top10_pct=12.0, top10_incl_pool_pct=96.0), 1)['status'] == 'kill'   # vault excluded from top10_pct still kills
